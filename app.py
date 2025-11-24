@@ -30,7 +30,7 @@ st.markdown("""
 # ==============================================================================
 
 # Usuario Maestro
-SUPER_ADMIN_USER = "ehafemann@talentpro+latam.com"
+SUPER_ADMIN_USER = "ehafemann@talentpro-latam.com"
 SUPER_ADMIN_PASS = "TalentPro_2019"
 
 if 'users_db' not in st.session_state:

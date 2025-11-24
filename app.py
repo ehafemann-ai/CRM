@@ -35,7 +35,7 @@ SUPER_ADMIN_PASS = "TalentPro_2019"
 
 if 'users_db' not in st.session_state:
     st.session_state['users_db'] = {
-        SUPER_ADMIN_USER: {'pass': SUPER_ADMIN_PASS, 'role': 'Super Admin', 'name': 'Emilio Hafemann'}
+        SUPER_ADMIN_USER: {'password': SUPER_ADMIN_PASS, 'role': 'Super Admin', 'name': 'Emilio Hafemann'}
     }
 
 if 'auth_status' not in st.session_state:

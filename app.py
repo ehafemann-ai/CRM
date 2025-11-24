@@ -27,13 +27,17 @@ st.markdown("""
 # 1. RECURSOS Y CARGA DE DATOS
 # ==============================================================================
 LOGO_PATH = "logo_talentpro.jpg"
+
 @st.cache_resource
 def descargar_logo():
     if not os.path.exists(LOGO_PATH):
         try:
             r = requests.get("https://bukwebapp-enterprise-chile.s3.amazonaws.com/talentpro/generals/logo_login/logo_login.jpg")
-            if r.status_code == 200: with open(LOGO_PATH, 'wb') as f: f.write(r.content)
-        except: pass
+            if r.status_code == 200:
+                with open(LOGO_PATH, 'wb') as f:
+                    f.write(r.content)
+        except:
+            pass
 descargar_logo()
 
 @st.cache_data(ttl=60)
@@ -48,7 +52,10 @@ def cargar_datos():
     except: return None, None, None, None, None, None, None
 
 data = cargar_datos()
-if data[0] is None: st.error("Falta 'precios.xlsx'"); st.stop()
+if data[0] is None:
+    st.error("Falta 'precios.xlsx'")
+    st.stop()
+
 df_p_usd, df_s_usd, df_config, df_p_cl, df_s_cl, df_p_br, df_s_br = data
 TODOS_LOS_PAISES = sorted(df_config['Pais'].unique().tolist()) if not df_config.empty else ["Chile", "Brasil"]
 
@@ -126,6 +133,7 @@ def get_empresa(pais, items):
     if pais=="Chile": return EMPRESAS["Chile_Pruebas"] if any(i['Ítem']=='Evaluación' for i in items) else EMPRESAS["Chile_Servicios"]
     return EMPRESAS["Latam"]
 
+# --- PDF ---
 class PDF(FPDF):
     def header(self):
         if os.path.exists(LOGO_PATH): self.image(LOGO_PATH, 10, 10, 35)
@@ -144,6 +152,7 @@ def generar_pdf_final(emp, cli, items, calc, lang, extras, tit):
     pdf.ln(5); pdf.set_xy(105,pdf.get_y()); pdf.set_text_color(0,51,102)
     pdf.cell(95,5,f"{t['date']}: {datetime.now().strftime('%d/%m/%Y')} | ID: {extras['id']}",0,1); pdf.ln(10)
     
+    # Tabla
     pdf.set_fill_color(0,51,102); pdf.set_text_color(255); pdf.set_font("Arial",'B',9)
     pdf.cell(110,8,t['desc'],0,0,'L',1); pdf.cell(20,8,t['qty'],0,0,'C',1); pdf.cell(30,8,t['unit'],0,0,'R',1); pdf.cell(30,8,t['total'],0,1,'R',1)
     pdf.set_text_color(0); pdf.set_font("Arial",'',8); mon=items[0]['Moneda']
@@ -153,6 +162,7 @@ def generar_pdf_final(emp, cli, items, calc, lang, extras, tit):
         pdf.cell(30,7,f"{i['Unit']:,.2f}",'B',0,'R'); pdf.cell(30,7,f"{i['Total']:,.2f}",'B',1,'R')
     pdf.ln(5)
     
+    # Totales
     x=120
     def r(l,v,b=False):
         pdf.set_x(x); pdf.set_font("Arial",'B' if b else '',10); pdf.set_text_color(0 if not b else 255)
@@ -165,6 +175,7 @@ def generar_pdf_final(emp, cli, items, calc, lang, extras, tit):
     if extras.get('desc',0)>0: r(t['discount'], -extras['desc'])
     pdf.ln(1); r(t['grand_total'], calc['total'], True); pdf.ln(10)
     
+    # Legal
     pdf.set_font("Arial",'I',8); pdf.set_text_color(80)
     if emp['Nombre']==EMPRESAS['Latam']['Nombre']: pdf.multi_cell(0,4,t['legal_intl'].format(pais=extras['pais']),0,'L'); pdf.ln(3)
     trigs=['feedback','coaching','entrevista','preparación','preparação','interview']
@@ -181,7 +192,7 @@ def generar_pdf_final(emp, cli, items, calc, lang, extras, tit):
 def modulo_cotizador():
     cl, ct = st.columns([1,5]); idi = cl.selectbox("🌐", ["ES","EN","PT"]); txt = TEXTOS[idi]; ct.title(txt['title'])
     
-    # AQUÍ ESTÁN LOS INDICADORES QUE ME PEDISTE
+    # INDICADORES
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("UF (CL)", f"${TASAS['UF']:,.0f}")
     k2.metric("USD (CL)", f"${TASAS['USD_CLP']:,.0f}")
@@ -238,8 +249,14 @@ def modulo_cotizador():
                 
                 pr, sv = [x for x in st.session_state['carrito'] if x['Ítem']=='Evaluación'], [x for x in st.session_state['carrito'] if x['Ítem']=='Servicio']
                 if ps=="Chile" and pr and sv:
+                    # SPLIT CHILE
+                    ex1=ext.copy(); ex1.update({'bank':0,'desc':0})
+                    # Solo generamos el PDF de Servicios para el usuario en este paso,
+                    # pero en un sistema real se enviarían los dos. Aquí para no complicar la UI
+                    # generamos un PDF de Servicios pero con una nota visual.
+                    # Lo ideal es generar el PDF que contiene los servicios primero.
                     pdf_b = generar_pdf_final(EMPRESAS['Chile_Servicios'],cli,sv,{'subtotal':sum(x['Total'] for x in sv),'fee':0,'tax_val':0,'tax_name':'','total':sum(x['Total'] for x in sv)+bnk-dsc},idi,ext,txt['quote'])
-                    st.warning("⚠️ Chile Mixto: Se generó PDF Servicios. Para pruebas crear cotización aparte.")
+                    st.warning("ℹ️ Chile Mixto: Has mezclado Pruebas y Servicios. Legalmente requieren facturas separadas. Este PDF muestra la parte de Servicios. Deberías generar otra cotización solo para las Pruebas.")
                 else:
                     ent=get_empresa(ps,st.session_state['carrito'])
                     calc={'subtotal':sub,'fee':vfee,'tax_name':tn,'tax_val':tv,'total':fin}
@@ -327,7 +344,7 @@ with st.sidebar:
         icons=['file-earmark-plus', 'clipboard-check', 'currency-dollar', 'bar-chart-fill'], 
         menu_icon="cast", default_index=0,
         styles={"nav-link-selected": {"background-color": "#003366"}})
-    st.caption("v4.1 - TalentPro Enterprise")
+    st.caption("v4.2 - TalentPro Enterprise")
 
 if menu == "Cotizador": modulo_cotizador()
 elif menu == "Seguimiento": modulo_seguimiento()

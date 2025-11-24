@@ -26,17 +26,22 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 1. SISTEMA DE AUTENTICACIÓN Y USUARIOS
+# 1. SISTEMA DE AUTENTICACIÓN (Con Solución de Errores)
 # ==============================================================================
 
 # Usuario Maestro
 SUPER_ADMIN_USER = "ehafemann@talentpro-latam.com"
-SUPER_ADMIN_PASS = "Max1234"  # <--- CONTRASEÑA ACTUALIZADA
+SUPER_ADMIN_PASS = "Max1234" # <--- CONTRASEÑA NUEVA
 
+# Inicialización de la Base de Datos de Usuarios
 if 'users_db' not in st.session_state:
     st.session_state['users_db'] = {
         SUPER_ADMIN_USER: {'pass': SUPER_ADMIN_PASS, 'role': 'Super Admin', 'name': 'Emilio Hafemann'}
     }
+else:
+    # REPARACIÓN AUTOMÁTICA: Si el admin existe pero la pass es vieja, la actualiza
+    if SUPER_ADMIN_USER in st.session_state['users_db']:
+        st.session_state['users_db'][SUPER_ADMIN_USER]['pass'] = SUPER_ADMIN_PASS
 
 if 'auth_status' not in st.session_state:
     st.session_state['auth_status'] = False
@@ -58,13 +63,14 @@ def login_page():
             submit = st.form_submit_button("Iniciar Sesión", use_container_width=True)
             
             if submit:
-                # Lógica defensiva para evitar errores
+                # Lógica defensiva corregida (Usa .get para evitar KeyError)
                 user_data = st.session_state['users_db'].get(username)
                 
-                if user_data and user_data['pass'] == password:
+                # Verificamos que exista el usuario Y que la contraseña coincida
+                if user_data and user_data.get('pass') == password:
                     st.session_state['auth_status'] = True
                     st.session_state['current_user'] = username
-                    st.session_state['current_role'] = user_data['role']
+                    st.session_state['current_role'] = user_data.get('role', 'Comercial')
                     st.success("¡Bienvenido!")
                     time.sleep(0.5)
                     st.rerun()
@@ -77,12 +83,13 @@ def logout():
     st.session_state['current_role'] = None
     st.rerun()
 
+# BLOQUEO DE SEGURIDAD
 if not st.session_state['auth_status']:
     login_page()
     st.stop()
 
 # ==============================================================================
-# 2. APLICACIÓN PRINCIPAL
+# 2. APLICACIÓN PRINCIPAL (Resto del código)
 # ==============================================================================
 
 LOGO_PATH = "logo_talentpro.jpg"

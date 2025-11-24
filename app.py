@@ -3,8 +3,8 @@ import pandas as pd
 import random
 from datetime import datetime, timedelta
 
-# --- CONFIGURACIÓN VISUAL ---
-st.set_page_config(page_title="TalentPro Cotizador", layout="wide", page_icon="🌎")
+# --- CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(page_title="TalentPro Global", layout="wide", page_icon="🌎")
 
 st.markdown("""
     <style>
@@ -20,38 +20,84 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 1. CONFIGURACIÓN DE PAÍSES (Desde Fila 29 de tu Excel)
+# 1. CONFIGURACIÓN DE PAÍSES (NIVELES DE SERVICIO)
 # ==============================================================================
-# COPIA Y PEGA AQUÍ LOS PAÍSES QUE APARECEN EN TU EXCEL DEBAJO DE LA FILA 29
-# PARA CADA CATEGORÍA (ALTO, MEDIO, BAJO).
+PAISES_ALTO = ["Estados Unidos", "Puerto Rico", "Canadá", "Brasil", "España", "Europa"]
+PAISES_MEDIO = ["Chile", "México", "Colombia", "Perú", "Panamá", "Uruguay", "Costa Rica"]
+PAISES_BAJO = ["Argentina", "Bolivia", "Paraguay", "Ecuador", "Guatemala", "Honduras", "El Salvador", "Nicaragua", "República Dominicana"]
 
-PAISES_ALTO = [
-    "Estados Unidos", "Puerto Rico", "Canadá", "Brasil", "España", "Europa"
-]
-
-PAISES_MEDIO = [
-    "Chile", "México", "Colombia", "Perú", "Panamá", "Uruguay", "Costa Rica"
-]
-
-PAISES_BAJO = [
-    "Argentina", "Bolivia", "Paraguay", "Ecuador", "Guatemala", 
-    "Honduras", "El Salvador", "Nicaragua", "República Dominicana"
-]
-
-# Unimos todo para el menú desplegable
 TODOS_LOS_PAISES = sorted(PAISES_ALTO + PAISES_MEDIO + PAISES_BAJO)
 
 def obtener_nivel_pais(pais):
     if pais in PAISES_ALTO: return "Alto"
     if pais in PAISES_MEDIO: return "Medio"
     if pais in PAISES_BAJO: return "Bajo"
-    return "Medio" # Por defecto si no se encuentra
+    return "Medio"
 
 # ==============================================================================
-# 2. PRECIOS DE SERVICIOS (TP US Alto / Medio / Bajo)
+# 2. BASE DE DATOS COMPLETA DE PRUEBAS (SHL / SOFTWARE)
 # ==============================================================================
-# Aquí están las tarifas. El sistema elegirá la columna correcta según el país.
+# Tramos: 1-100, 101-200, 201-300, 301-500, 501-1000, 1001+
+DB_PRECIOS_PRUEBAS = {
+    # --- PRUEBAS INDIVIDUALES ---
+    "OPQ (Personalidad Laboral)": [(100, 22), (200, 21), (300, 20), (500, 19), (1000, 18), (float('inf'), 17)],
+    "MQ (Motivación)": [(100, 17), (200, 17), (300, 16), (500, 15), (1000, 14), (float('inf'), 13)],
+    "CCSQ (Contacto con Cliente)": [(100, 17), (200, 17), (300, 16), (500, 15), (1000, 14), (float('inf'), 13)],
+    
+    # --- REPORTES OPQ ---
+    "OPQ + Profile Report": [(100, 29), (200, 28), (300, 27), (500, 26), (1000, 25), (float('inf'), 24)],
+    "OPQ + Universal Competences (LA Version)": [(100, 49), (200, 45), (300, 39), (500, 37), (1000, 35), (float('inf'), 32)],
+    "OPQ + Universal Competences (Intl Version)": [(100, 93), (200, 85), (300, 78), (500, 72), (1000, 66), (float('inf'), 60)],
+    "OPQ + Person-Job Match (LA Version)": [(100, 74), (200, 68), (300, 62), (500, 56), (1000, 50), (float('inf'), 45)],
+    "OPQ + Person-Job Match (Intl Version)": [(100, 107), (200, 99), (300, 94), (500, 88), (1000, 80), (float('inf'), 73)],
+    "OPQ + Development Action Planner (LA)": [(100, 65), (200, 61), (300, 57), (500, 52), (1000, 48), (float('inf'), 43)],
+    "OPQ + Development Action Planner (Intl)": [(100, 108), (200, 99), (300, 92), (500, 84), (1000, 78), (float('inf'), 70)],
+    "OPQ + Digital Readiness Report": [(100, 39), (200, 35), (300, 33), (500, 32), (1000, 31), (float('inf'), 30)],
+    "OPQ + Candidate Report": [(100, 72), (200, 68), (300, 64), (500, 59), (1000, 55), (float('inf'), 50)],
+    "OPQ + Emotional Intelligence Report": [(100, 63), (200, 59), (300, 56), (500, 52), (1000, 49), (float('inf'), 45)],
+    "OPQ + Manager Plus Report": [(100, 104), (200, 97), (300, 90), (500, 85), (1000, 79), (float('inf'), 74)],
+    "OPQ + Team Impact Report": [(100, 75), (200, 69), (300, 62), (500, 56), (1000, 51), (float('inf'), 45)],
+    "OPQ + Leadership Report": [(100, 254), (200, 242), (300, 237), (500, 223), (1000, 215), (float('inf'), 195)],
+    "OPQ + Enterprise Leadership Report": [(100, 238), (200, 229), (300, 220), (500, 208), (1000, 195), (float('inf'), 180)],
+    "OPQ + High Potential Assessment v2.0": [(100, 238), (200, 229), (300, 220), (500, 208), (1000, 195), (float('inf'), 180)],
 
+    # --- MQ & SALES ---
+    "MQ + MQ Profile Report": [(100, 31), (200, 29), (300, 27), (500, 25), (1000, 22), (float('inf'), 20)],
+    "OPQ MQ + Sales Report (LA Version)": [(100, 83), (200, 79), (300, 74), (500, 68), (1000, 62), (float('inf'), 55)],
+    "OPQ MQ + Sales Report (Intl Version)": [(100, 140), (200, 132), (300, 125), (500, 118), (1000, 108), (float('inf'), 100)],
+
+    # --- JOB FOCUSED & ASSESSMENTS ---
+    "JFA Entry Level (General)": [(100, 21), (200, 20), (300, 18), (500, 17), (1000, 15), (float('inf'), 13)],
+    "JFA Graduate / Technology Prof.": [(100, 22), (200, 15), (300, 20), (500, 18), (1000, 16), (float('inf'), 15)],
+    "JFA Professionals": [(100, 73), (200, 68), (300, 62), (500, 56), (1000, 50), (float('inf'), 45)],
+    "JFA Manager": [(100, 104), (200, 98), (300, 92), (500, 86), (1000, 81), (float('inf'), 75)],
+    "Prueba de Integridad": [(100, 11), (200, 10), (300, 9), (500, 8), (1000, 8), (float('inf'), 7)],
+
+    # --- VERIFY (HABILIDADES) ---
+    "Verify Tradicional (Ability/Reasoning)": [(100, 21), (200, 20), (300, 18), (500, 16), (1000, 14), (float('inf'), 13)],
+    "Verify Interactive (Gral)": [(100, 19), (200, 18), (300, 16), (500, 14), (1000, 12), (float('inf'), 11)],
+    "Verify G+": [(100, 73), (200, 67), (300, 62), (500, 58), (1000, 53), (float('inf'), 47)],
+    "Verify Interactive G+": [(100, 52), (200, 48), (300, 44), (500, 41), (1000, 38), (float('inf'), 33)],
+    "Verify Ability to Work w/ Info": [(100, 15), (200, 14), (300, 13), (500, 12), (1000, 11), (float('inf'), 10)],
+    
+    # --- IDIOMAS Y TÉCNICOS ---
+    "Written English / Spanish": [(100, 15), (200, 14), (300, 13), (500, 12), (1000, 11), (float('inf'), 10)],
+    "SVAR (Spoken English)": [(100, 24), (200, 23), (300, 22), (500, 21), (1000, 19), (float('inf'), 17)],
+    "WriteX (Email Writing)": [(100, 21), (200, 20), (300, 18), (500, 16), (1000, 14), (float('inf'), 13)],
+    "WriteX (Essay Writing)": [(100, 21), (200, 20), (300, 18), (500, 16), (1000, 14), (float('inf'), 13)],
+    "MS Office (Excel/Word/PPT)": [(100, 15), (200, 14), (300, 13), (500, 12), (1000, 11), (float('inf'), 10)],
+    "Automata": [(100, 23), (200, 22), (300, 21), (500, 20), (1000, 18), (float('inf'), 16)],
+
+    # --- 360 & SMART INTERVIEW ---
+    "360 Assessment with OPQ": [(float('inf'), 420)],
+    "360 Evaluation without OPQ": [(float('inf'), 210)],
+    "Smart Interview Live / Coding": [(100, 24), (200, 23), (300, 22), (500, 21), (1000, 19), (float('inf'), 17)],
+    "Smart Interview On Demand": [(100, 15), (200, 14), (300, 13), (500, 12), (1000, 11), (float('inf'), 10)],
+}
+
+# ==============================================================================
+# 3. BASE DE DATOS DE SERVICIOS (TP US Alto / Medio / Bajo)
+# ==============================================================================
 DB_TARIFAS_SERVICIOS = {
     "Assessment Center (Jornada)": {
         "Alto":  {"Angelica": 1800, "Senior": 1200, "BM": 1000, "BP": 800},
@@ -80,21 +126,6 @@ DB_TARIFAS_SERVICIOS = {
     }
 }
 
-# ==============================================================================
-# 3. PRECIOS DE PRUEBAS (SHL / Evaluaciones)
-# ==============================================================================
-# Estos precios suelen ser internacionales, pero puedes ajustarlos si es necesario.
-
-DB_PRECIOS_PRUEBAS = {
-    "OPQ (Personalidad Laboral)": [(100, 22), (200, 21), (300, 20), (500, 19), (1000, 18), (float('inf'), 17)],
-    "MQ (Motivación)": [(100, 17), (200, 17), (300, 16), (500, 15), (1000, 14), (float('inf'), 13)],
-    "CCSQ (Contacto Cliente)": [(100, 17), (200, 17), (300, 16), (500, 15), (1000, 14), (float('inf'), 13)],
-    "Verify Interactive": [(100, 19), (200, 18), (300, 16), (500, 14), (1000, 12), (float('inf'), 11)],
-    "Smart Interview": [(100, 24), (200, 23), (300, 22), (500, 21), (1000, 19), (float('inf'), 17)],
-    "360 Assessment": [(float('inf'), 420)],
-    "SVAR (Inglés)": [(100, 24), (200, 23), (300, 22), (500, 21), (1000, 19), (float('inf'), 17)]
-}
-
 # --- ESTADO DE LA APLICACIÓN ---
 if 'cotizaciones' not in st.session_state:
     st.session_state['cotizaciones'] = pd.DataFrame([
@@ -116,7 +147,7 @@ def cotizador():
     st.title("📝 Cotizador Internacional TalentPro")
     st.markdown("---")
 
-    # 1. SELECCIÓN DE PAÍS (CRÍTICO)
+    # 1. SELECCIÓN DE PAÍS
     with st.container():
         st.subheader("1. Configuración Regional")
         col_pais1, col_pais2, col_pais3 = st.columns([1, 2, 1])
@@ -124,11 +155,10 @@ def cotizador():
         with col_pais1:
             pais_sel = st.selectbox("🌎 País del Proyecto", TODOS_LOS_PAISES, index=TODOS_LOS_PAISES.index("Chile") if "Chile" in TODOS_LOS_PAISES else 0)
         
-        # Determinar nivel automáticamente
         nivel = obtener_nivel_pais(pais_sel)
         
         with col_pais2:
-            st.info(f"El país **{pais_sel}** corresponde a la tarifa: **TP US {nivel.upper()}**")
+            st.info(f"País **{pais_sel}** -> Tarifa Servicios: **TP US {nivel.upper()}**")
 
     # 2. DATOS CLIENTE
     st.markdown("---")
@@ -175,7 +205,6 @@ def cotizador():
         rol = col_rol.selectbox("Rol", ["Angelica", "Senior", "BM", "BP"])
         horas = col_horas.number_input("Horas", min_value=1, value=1)
         
-        # Obtener precio dinámico según el Nivel del País
         try:
             tarifa = DB_TARIFAS_SERVICIOS[sel_s][nivel][rol]
             ks3.metric(f"Tarifa ({nivel})", f"${tarifa:.2f}")
@@ -250,7 +279,6 @@ def dashboard():
     df = st.session_state['cotizaciones']
     df['fecha'] = pd.to_datetime(df['fecha'])
     
-    # KPIs
     k1, k2, k3 = st.columns(3)
     k1.metric("Ventas (Facturadas)", f"${df[df['estado'].isin(['Facturada','Pagada'])]['total'].sum():,.0f}")
     k2.metric("Pipeline", f"${df[df['estado'].isin(['Enviada','Aprobada'])]['total'].sum():,.0f}")
@@ -273,7 +301,6 @@ def dashboard():
             st.write(f"**{v}**: ${real:,.0f} / ${meta:,.0f}")
             st.progress(min(real/meta, 1.0))
             
-    # Alerta Inactivos
     st.markdown("---")
     st.subheader("Alertas")
     hoy = datetime.now()

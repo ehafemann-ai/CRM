@@ -30,7 +30,6 @@ df_pruebas = pd.DataFrame([
 ])
 
 # --- 3. SERVICIOS GLOBAL (USD - Niveles) ---
-# Creamos una lista base y la expandimos por niveles
 servicios_base = [
     ("Assessment Center (Jornada)", 1800, 1500, 1200),
     ("Entrevista por Competencias", 450, 300, 220),
@@ -44,20 +43,16 @@ servicios_base = [
 
 data_servicios = []
 for serv, p_alto, p_medio, p_bajo in servicios_base:
-    # Alto
     data_servicios.append({"Servicio": serv, "Nivel": "Alto", "Angelica": p_alto, "Senior": p_alto*0.7, "BM": p_alto*0.6, "BP": p_alto*0.5})
-    # Medio
     data_servicios.append({"Servicio": serv, "Nivel": "Medio", "Angelica": p_medio, "Senior": p_medio*0.7, "BM": p_medio*0.6, "BP": p_medio*0.5})
-    # Bajo
     data_servicios.append({"Servicio": serv, "Nivel": "Bajo", "Angelica": p_bajo, "Senior": p_bajo*0.7, "BM": p_bajo*0.6, "BP": p_bajo*0.5})
 
 df_servicios = pd.DataFrame(data_servicios)
 
 # --- 4. CHILE (UF) ---
 df_p_cl = df_pruebas.copy()
-# Simulamos precios en UF (Dividiendo por ~38.000 y ajustando)
 for col in [100, 200, 300, 500, 1000, "Infinito"]:
-    df_p_cl[col] = df_p_cl[col].apply(lambda x: round(x / 35, 2)) # Ejemplo simple conversión
+    df_p_cl[col] = df_p_cl[col].apply(lambda x: round(x / 35, 2))
 
 df_s_cl = pd.DataFrame([
     {"Servicio": "Assessment Center (Jornada)", "Angelica": 45, "Senior": 30, "BM": 25, "BP": 15},
@@ -69,7 +64,6 @@ df_s_cl = pd.DataFrame([
 
 # --- 5. BRASIL (R$) ---
 df_p_br = df_pruebas.copy()
-# Simulamos precios en Reales (Multiplicando por ~5)
 for col in [100, 200, 300, 500, 1000, "Infinito"]:
     df_p_br[col] = df_p_br[col].apply(lambda x: x * 5.5)
 
@@ -80,9 +74,10 @@ df_s_br = pd.DataFrame([
     {"Servicio": "Consultoría HR (Hora)", "Angelica": 1200, "Senior": 600, "BM": 400, "BP": 300},
 ])
 
-# --- GENERAR EXCEL ---
+# --- GENERAR EXCEL (USANDO OPENPYXL QUE YA TIENES) ---
 buffer = io.BytesIO()
-with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+# Aquí estaba el error, lo cambié a 'openpyxl'
+with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
     df_pruebas.to_excel(writer, sheet_name='Pruebas', index=False)
     df_servicios.to_excel(writer, sheet_name='Servicios', index=False)
     df_config.to_excel(writer, sheet_name='Config', index=False)

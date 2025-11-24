@@ -142,7 +142,7 @@ TEXTOS = {
         "qty": "Cant.", "unit": "Unitario", "total": "Total", "subtotal": "Subtotal", "fee": "Fee Admin (10%)", 
         "grand_total": "TOTAL A PAGAR", "invoice_to": "Facturar a:", "quote": "COTIZACIÓN", "date": "Fecha", 
         "validity": "Validez: 30 días", "save": "Guardar y Descargar", "download": "Descargar PDF", 
-        "sec_prod": "Licencias", "sec_serv": "Servicios", "discount": "Descuento", "tax": "Impuestos", 
+        "sec_prod": "Assessments", "sec_serv": "Servicios", "discount": "Descuento", "tax": "Impuestos", 
         "legal_intl": "Facturación a {pais}. Sumar impuestos retenidos y gastos OUR.", 
         "noshow_title": "Políticas de Asistencia y No-Show:",
         "noshow_text": "Para Feedbacks, Coaching, Preparaciones o Entrevistas: Se permite un límite de 15% de ausencias con aviso de menos de 24 horas. Si la persona no llega y no avisó, se esperará 10 minutos y se enviará correo. Si no llega, se cobrará tarifa 'No Show' del 50% de la sesión."

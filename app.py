@@ -1,94 +1,321 @@
 import streamlit as st
 import pandas as pd
-import io
+import random
+import requests
+from datetime import datetime
 
-st.title("🛠️ Generador de Archivo de Precios")
-st.info("Haz clic en el botón para descargar la plantilla Excel correcta.")
+# --- CONFIGURACIÓN ---
+st.set_page_config(page_title="TalentPro System", layout="wide", page_icon="🌎")
 
-# --- 1. CONFIGURACIÓN (PAÍSES) ---
-df_config = pd.DataFrame({
-    'Pais': [
-        "Estados Unidos", "Puerto Rico", "Canadá", "Brasil", "España", "Europa", "Reino Unido", # Alto
-        "Chile", "México", "Colombia", "Perú", "Panamá", "Uruguay", "Costa Rica", # Medio
-        "Argentina", "Bolivia", "Paraguay", "Ecuador", "Guatemala", "Honduras", "El Salvador", "Nicaragua", "República Dominicana" # Bajo
-    ],
-    'Nivel': [
-        "Alto", "Alto", "Alto", "Alto", "Alto", "Alto", "Alto",
-        "Medio", "Medio", "Medio", "Medio", "Medio", "Medio", "Medio",
-        "Bajo", "Bajo", "Bajo", "Bajo", "Bajo", "Bajo", "Bajo", "Bajo", "Bajo"
-    ]
-})
+st.markdown("""
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    .stMetric {background-color: #f8f9fa; border: 1px solid #dee2e6; padding: 10px; border-radius: 5px;}
+    </style>
+""", unsafe_allow_html=True)
 
-# --- 2. PRUEBAS GLOBAL (USD) ---
-df_pruebas = pd.DataFrame([
-    {"Producto": "OPQ (Personalidad Laboral)", 100: 22, 200: 21, 300: 20, 500: 19, 1000: 18, "Infinito": 17},
-    {"Producto": "MQ (Motivación)", 100: 17, 200: 17, 300: 16, 500: 15, 1000: 14, "Infinito": 13},
-    {"Producto": "CCSQ (Contacto con Cliente)", 100: 17, 200: 17, 300: 16, 500: 15, 1000: 14, "Infinito": 13},
-    {"Producto": "Verify Interactive", 100: 19, 200: 18, 300: 16, 500: 14, 1000: 12, "Infinito": 11},
-    {"Producto": "Smart Interview", 100: 24, 200: 23, 300: 22, 500: 21, 1000: 19, "Infinito": 17},
-    {"Producto": "360 Assessment with OPQ", 100: 420, 200: 420, 300: 420, 500: 420, 1000: 420, "Infinito": 420},
-])
+# --- 1. OBTENER INDICADORES ECONÓMICOS (EN VIVO) ---
+@st.cache_data(ttl=3600) # Se actualiza cada 1 hora
+def obtener_indicadores():
+    tasas = {"UF": 38000, "USD_CLP": 950, "USD_BRL": 5.5, "Status": "Offline"} # Valores defecto
+    try:
+        # Chile (Mindicador.cl)
+        resp_cl = requests.get('https://mindicador.cl/api').json()
+        tasas['UF'] = resp_cl['uf']['valor']
+        tasas['USD_CLP'] = resp_cl['dolar']['valor']
+        
+        # Brasil (Open Exchange Rates)
+        resp_br = requests.get('https://open.er-api.com/v6/latest/USD').json()
+        tasas['USD_BRL'] = resp_br['rates']['BRL']
+        
+        tasas['Status'] = "Online"
+    except:
+        pass # Si falla, usa los valores por defecto
+    return tasas
 
-# --- 3. SERVICIOS GLOBAL (USD - Niveles) ---
-servicios_base = [
-    ("Assessment Center (Jornada)", 1800, 1500, 1200),
-    ("Entrevista por Competencias", 450, 300, 220),
-    ("Feedback Individual", 550, 400, 300),
-    ("Consultoría HR (Hora)", 350, 250, 180),
-    ("Workshop / Taller", 2500, 2000, 1500),
-    ("Entrevista Compromiso", 450, 300, 220),
-    ("Ficha Resumen", 200, 150, 120),
-    ("Hunting", 5000, 4000, 3000)
-]
+TASAS_DIA = obtener_indicadores()
 
-data_servicios = []
-for serv, p_alto, p_medio, p_bajo in servicios_base:
-    data_servicios.append({"Servicio": serv, "Nivel": "Alto", "Angelica": p_alto, "Senior": p_alto*0.7, "BM": p_alto*0.6, "BP": p_alto*0.5})
-    data_servicios.append({"Servicio": serv, "Nivel": "Medio", "Angelica": p_medio, "Senior": p_medio*0.7, "BM": p_medio*0.6, "BP": p_medio*0.5})
-    data_servicios.append({"Servicio": serv, "Nivel": "Bajo", "Angelica": p_bajo, "Senior": p_bajo*0.7, "BM": p_bajo*0.6, "BP": p_bajo*0.5})
+# --- 2. CARGAR EXCEL ---
+@st.cache_data(ttl=60)
+def cargar_datos():
+    try:
+        xls = pd.ExcelFile('precios.xlsx')
+        df_p_usd = pd.read_excel(xls, 'Pruebas')
+        df_s_usd = pd.read_excel(xls, 'Servicios')
+        df_config = pd.read_excel(xls, 'Config')
+        
+        try: df_p_cl = pd.read_excel(xls, 'Pruebas_CL')
+        except: df_p_cl = pd.DataFrame()
+        try: df_s_cl = pd.read_excel(xls, 'Servicios_CL')
+        except: df_s_cl = pd.DataFrame()
+        try: df_p_br = pd.read_excel(xls, 'Pruebas_BR')
+        except: df_p_br = pd.DataFrame()
+        try: df_s_br = pd.read_excel(xls, 'Servicios_BR')
+        except: df_s_br = pd.DataFrame()
 
-df_servicios = pd.DataFrame(data_servicios)
+        return df_p_usd, df_s_usd, df_config, df_p_cl, df_s_cl, df_p_br, df_s_br
+    except FileNotFoundError:
+        return None, None, None, None, None, None, None
 
-# --- 4. CHILE (UF) ---
-df_p_cl = df_pruebas.copy()
-for col in [100, 200, 300, 500, 1000, "Infinito"]:
-    df_p_cl[col] = df_p_cl[col].apply(lambda x: round(x / 35, 2))
+data = cargar_datos()
+if data[0] is None:
+    st.error("⚠️ Falta 'precios.xlsx' en GitHub.")
+    st.stop()
 
-df_s_cl = pd.DataFrame([
-    {"Servicio": "Assessment Center (Jornada)", "Angelica": 45, "Senior": 30, "BM": 25, "BP": 15},
-    {"Servicio": "Entrevista por Competencias", "Angelica": 5.5, "Senior": 3.5, "BM": 2.5, "BP": 1.5},
-    {"Servicio": "Feedback Individual", "Angelica": 8, "Senior": 5, "BM": 3, "BP": 2},
-    {"Servicio": "Consultoría HR (Hora)", "Angelica": 6, "Senior": 4, "BM": 3, "BP": 2},
-    {"Servicio": "Taller TalentPro", "Angelica": 60, "Senior": 40, "BM": 30, "BP": 20},
-])
+df_p_usd, df_s_usd, df_config, df_p_cl, df_s_cl, df_p_br, df_s_br = data
+LISTA_PAISES = df_config['Pais'].unique().tolist()
+ROLES = ['Angelica', 'Senior', 'BM', 'BP']
 
-# --- 5. BRASIL (R$) ---
-df_p_br = df_pruebas.copy()
-for col in [100, 200, 300, 500, 1000, "Infinito"]:
-    df_p_br[col] = df_p_br[col].apply(lambda x: x * 5.5)
+# --- STATE ---
+if 'cotizaciones' not in st.session_state:
+    st.session_state['cotizaciones'] = pd.DataFrame(columns=['id', 'fecha', 'empresa', 'pais', 'total', 'moneda', 'estado', 'vendedor'])
+if 'carrito' not in st.session_state: st.session_state['carrito'] = []
 
-df_s_br = pd.DataFrame([
-    {"Servicio": "Assessment Center (Jornada)", "Angelica": 8000, "Senior": 5000, "BM": 4000, "BP": 3000},
-    {"Servicio": "Entrevista por Competencias", "Angelica": 1500, "Senior": 800, "BM": 600, "BP": 400},
-    {"Servicio": "Feedback Individual", "Angelica": 2000, "Senior": 1000, "BM": 800, "BP": 500},
-    {"Servicio": "Consultoría HR (Hora)", "Angelica": 1200, "Senior": 600, "BM": 400, "BP": 300},
-])
+# --- LÓGICA DE CONTEXTO ---
+def obtener_contexto_pais(pais):
+    if pais == "Chile":
+        return {"moneda": "UF", "df_pruebas": df_p_cl, "df_servicios": df_s_cl, "tipo": "Local"}
+    elif pais in ["Brasil", "Brazil"]:
+        return {"moneda": "R$", "df_pruebas": df_p_br, "df_servicios": df_s_br, "tipo": "Local"}
+    else:
+        nivel = df_config[df_config['Pais'] == pais].iloc[0]['Nivel'] if not df_config[df_config['Pais'] == pais].empty else "Medio"
+        return {"moneda": "US$", "df_pruebas": df_p_usd, "df_servicios": df_s_usd, "tipo": "Internacional", "nivel": nivel}
 
-# --- GENERAR EXCEL (USANDO OPENPYXL QUE YA TIENES) ---
-buffer = io.BytesIO()
-# Aquí estaba el error, lo cambié a 'openpyxl'
-with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-    df_pruebas.to_excel(writer, sheet_name='Pruebas', index=False)
-    df_servicios.to_excel(writer, sheet_name='Servicios', index=False)
-    df_config.to_excel(writer, sheet_name='Config', index=False)
-    df_p_cl.to_excel(writer, sheet_name='Pruebas_CL', index=False)
-    df_s_cl.to_excel(writer, sheet_name='Servicios_CL', index=False)
-    df_p_br.to_excel(writer, sheet_name='Pruebas_BR', index=False)
-    df_s_br.to_excel(writer, sheet_name='Servicios_BR', index=False)
+# --- CÁLCULOS ESPECIALES (PAA Y EXCEL) ---
 
-st.download_button(
-    label="📥 DESCARGAR PRECIOS.XLSX",
-    data=buffer,
-    file_name="precios.xlsx",
-    mime="application/vnd.ms-excel"
-)
+def calcular_paa(cantidad, moneda_destino):
+    """
+    Lógica Transversal:
+    1-2: US$1.500
+    3-5: US$1.200
+    6+:  US$1.100
+    """
+    # 1. Determinar precio base en USD
+    if cantidad <= 2: base_usd = 1500
+    elif cantidad <= 5: base_usd = 1200
+    else: base_usd = 1100
+    
+    # 2. Convertir según moneda del país
+    if moneda_destino == "US$":
+        return base_usd, f"Tramo USD: ${base_usd}"
+        
+    elif moneda_destino == "UF":
+        # Fórmula: (USD * Valor Dolar CLP) / Valor UF
+        valor_clp = base_usd * TASAS_DIA['USD_CLP']
+        valor_uf = valor_clp / TASAS_DIA['UF']
+        return valor_uf, f"(USD {base_usd} * ${TASAS_DIA['USD_CLP']}) / UF {TASAS_DIA['UF']}"
+        
+    elif moneda_destino == "R$":
+        valor_brl = base_usd * TASAS_DIA['USD_BRL']
+        return valor_brl, f"USD {base_usd} * {TASAS_DIA['USD_BRL']:.2f} BRL/USD"
+    
+    return 0.0, "Error"
+
+def calcular_prueba_excel(df, producto, cantidad):
+    if df.empty: return 0.0
+    fila = df[df['Producto'] == producto]
+    if fila.empty: return 0.0
+    tramos = [100, 200, 300, 500, 1000, 'Infinito']
+    for tramo in tramos:
+        limite = float('inf') if tramo == 'Infinito' else tramo
+        if cantidad <= limite:
+            try: return float(fila.iloc[0][tramo])
+            except: return 0.0
+    return 0.0
+
+def calcular_servicio(df, servicio, rol, contexto):
+    if df.empty: return 0.0
+    if contexto['tipo'] == "Internacional":
+        fila = df[(df['Servicio'] == servicio) & (df['Nivel'] == contexto['nivel'])]
+    else:
+        fila = df[df['Servicio'] == servicio]
+    if fila.empty: return 0.0
+    try: return float(fila.iloc[0][rol])
+    except: return 0.0
+
+# --- PANTALLAS ---
+
+def cotizador():
+    st.title("📝 Cotizador Inteligente")
+    
+    # INDICADORES ENCABEZADO
+    k1, k2, k3, k4 = st.columns(4)
+    if TASAS_DIA['Status'] == "Online":
+        k1.success(f"Dólar (CL): ${TASAS_DIA['USD_CLP']:,.0f}")
+        k2.success(f"UF (Hoy): ${TASAS_DIA['UF']:,.0f}")
+        k3.success(f"USD->BRL: {TASAS_DIA['USD_BRL']:.2f}")
+    else:
+        st.warning("⚠️ Usando tasas por defecto (API Offline)")
+
+    st.markdown("---")
+
+    # 1. PAÍS
+    with st.container():
+        st.subheader("1. Configuración")
+        c1, c2 = st.columns([1, 2])
+        idx_cl = LISTA_PAISES.index("Chile") if "Chile" in LISTA_PAISES else 0
+        pais_sel = c1.selectbox("🌎 País", LISTA_PAISES, index=idx_cl)
+        
+        ctx = obtener_contexto_pais(pais_sel)
+        moneda = ctx['moneda']
+        
+        msg = f"Moneda: **{moneda}**"
+        if ctx['tipo'] == "Internacional": msg += f" | Nivel: **{ctx['nivel']}**"
+        c2.info(msg)
+
+    # 2. CLIENTE
+    st.markdown("---")
+    cc1, cc2, cc3, cc4 = st.columns(4)
+    empresa = cc1.text_input("Empresa")
+    contacto = cc2.text_input("Contacto")
+    email = cc3.text_input("Email")
+    vendedor = cc4.selectbox("Ejecutivo", ["Comercial 1", "Comercial 2", "Gerencia"])
+    fecha = cc1.date_input("Fecha", datetime.now())
+
+    # 3. ÍTEMS
+    st.markdown("---")
+    st.subheader("2. Selección")
+    
+    tab_p, tab_s = st.tabs(["🧩 Pruebas & PAA", "💼 Servicios"])
+
+    # --- PESTAÑA PRUEBAS + PAA ---
+    with tab_p:
+        cp1, cp2, cp3, cp4 = st.columns([3, 1, 1, 1])
+        
+        # Mezclamos Excel + PAA
+        lista_excel = ctx['df_pruebas']['Producto'].unique().tolist() if not ctx['df_pruebas'].empty else []
+        # Agregamos PAA manualmente a la lista
+        lista_completa = ["Certificación PAA (Transversal)"] + lista_excel
+        
+        sel_p = cp1.selectbox("Producto", lista_completa)
+        cant_p = cp2.number_input("Cantidad", 1, 10000, 1) # PAA puede ser 1
+        
+        # LÓGICA DE CALCULO
+        nota_calc = ""
+        if sel_p == "Certificación PAA (Transversal)":
+            unit_p, nota_calc = calcular_paa(cant_p, moneda)
+        else:
+            unit_p = calcular_prueba_excel(ctx['df_pruebas'], sel_p, cant_p)
+            
+        cp3.metric(f"Unitario ({moneda})", f"{unit_p:,.2f}")
+        if nota_calc: st.caption(f"Cálculo: {nota_calc}")
+        
+        if cp4.button("Agregar", key="add_p"):
+            st.session_state['carrito'].append({
+                "Ítem": "Evaluación", "Desc": sel_p, "Det": f"x{cant_p}",
+                "Moneda": moneda, "Unit": unit_p, "Total": unit_p * cant_p
+            })
+            st.rerun()
+
+    # --- PESTAÑA SERVICIOS ---
+    with tab_s:
+        cs1, cs2, cs3, cs4 = st.columns([3, 2, 1, 1])
+        lista_servicios = ctx['df_servicios']['Servicio'].unique().tolist() if not ctx['df_servicios'].empty else []
+        
+        if lista_servicios:
+            sel_s = cs1.selectbox("Servicio", lista_servicios)
+            c_rol, c_hora = cs2.columns(2)
+            rol = c_rol.selectbox("Rol", ROLES)
+            horas = c_hora.number_input("Horas", 1, 1000, 1)
+            
+            unit_s = calcular_servicio(ctx['df_servicios'], sel_s, rol, ctx)
+            
+            cs3.metric(f"Tarifa ({moneda})", f"{unit_s:,.2f}")
+            if cs4.button("Agregar", key="add_s"):
+                st.session_state['carrito'].append({
+                    "Ítem": "Servicio", "Desc": sel_s, "Det": f"{rol} ({horas}h)",
+                    "Moneda": moneda, "Unit": unit_s, "Total": unit_s * horas
+                })
+                st.rerun()
+        else:
+            st.warning("No hay servicios configurados en el Excel para este país.")
+
+    # 4. CARRITO
+    if st.session_state['carrito']:
+        st.markdown("---")
+        df_c = pd.DataFrame(st.session_state['carrito'])
+        
+        monedas_cart = df_c['Moneda'].unique()
+        if len(monedas_cart) > 1:
+            st.error(f"⚠️ Error: Hay mezcla de monedas ({monedas_cart}). Vacía el carrito.")
+        else:
+            mon_act = monedas_cart[0]
+            st.dataframe(df_c, use_container_width=True, hide_index=True)
+            
+            subtotal = df_c['Total'].sum()
+            # Fee solo aplica a Evaluaciones
+            tot_eval = df_c[df_c['Ítem'] == 'Evaluación']['Total'].sum()
+            
+            c_f1, c_f2 = st.columns([3, 1])
+            with c_f2:
+                st.markdown("### Totales")
+                fee = st.checkbox("Fee 10% (Pruebas/PAA)", value=False)
+                comision = st.number_input("Comisión Banco", 0.0, value=30.0 if mon_act == "US$" else 0.0)
+                desc = st.number_input("Descuento", 0.0)
+                
+                val_fee = tot_eval * 0.10 if fee else 0.0
+                final = subtotal + val_fee + comision - desc
+                
+                st.markdown(f"""
+                | Concepto | Monto |
+                | :--- | ---: |
+                | **Subtotal** | **{mon_act} {subtotal:,.2f}** |
+                | Fee Admin | {mon_act} {val_fee:,.2f} |
+                | Banco | {mon_act} {comision:,.2f} |
+                | Descuento | - {mon_act} {desc:,.2f} |
+                | **TOTAL** | **{mon_act} {final:,.2f}** |
+                """)
+                
+                if st.button("💾 CONFIRMAR", type="primary"):
+                    if not empresa: st.error("Falta Empresa")
+                    else:
+                        new_id = f"TP-{random.randint(1000,9999)}"
+                        reg = {
+                            'id': new_id, 'fecha': fecha.strftime("%Y-%m-%d"),
+                            'empresa': empresa, 'pais': pais_sel, 'moneda': mon_act,
+                            'total': final, 'estado': 'Enviada', 'vendedor': vendedor
+                        }
+                        st.session_state['cotizaciones'] = pd.concat([st.session_state['cotizaciones'], pd.DataFrame([reg])], ignore_index=True)
+                        st.session_state['carrito'] = []
+                        st.success(f"Guardado: {new_id}")
+                        st.balloons()
+            with c_f1:
+                if st.button("Vaciar Carrito"):
+                    st.session_state['carrito'] = []
+                    st.rerun()
+
+def dashboard():
+    st.title("📊 Dashboard")
+    df = st.session_state['cotizaciones']
+    if df.empty:
+        st.info("Sin datos.")
+        return
+    k1, k2, k3 = st.columns(3)
+    k1.write("Ventas por Moneda")
+    k1.dataframe(df[df['estado'].isin(['Facturada','Pagada'])].groupby('moneda')['total'].sum())
+    k2.metric("Pipeline (Cant)", len(df[df['estado'].isin(['Enviada','Aprobada'])]))
+    k3.metric("Total Cotizaciones", len(df))
+
+def finanzas():
+    st.title("💰 Finanzas")
+    df = st.session_state['cotizaciones']
+    if df.empty: return
+    edited = st.data_editor(
+        df,
+        column_config={"estado": st.column_config.SelectboxColumn("Estado", options=["Enviada", "Aprobada", "Facturada", "Pagada", "Rechazada"]), "total": st.column_config.NumberColumn(format="%.2f")},
+        disabled=["id", "empresa", "vendedor", "pais"],
+        hide_index=True,
+        use_container_width=True
+    )
+    if not edited.equals(df):
+        st.session_state['cotizaciones'] = edited
+        st.toast("Guardado")
+
+with st.sidebar:
+    st.title("TalentPro")
+    opcion = st.radio("Menú", ["Cotizador", "Dashboard", "Finanzas"])
+
+if opcion == "Cotizador": cotizador()
+elif opcion == "Dashboard": dashboard()
+elif opcion == "Finanzas": finanzas()

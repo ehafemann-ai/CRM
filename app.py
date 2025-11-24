@@ -59,7 +59,7 @@ def login_page():
             
             if submit:
                 if username in st.session_state['users_db']:
-                    if st.session_state['users_db'][username]['pass'] == password:
+                    if st.session_state['users_db'][username]['pass'] == password: TalentPro_2019
                         st.session_state['auth_status'] = True
                         st.session_state['current_user'] = username
                         st.session_state['current_role'] = st.session_state['users_db'][username]['role']

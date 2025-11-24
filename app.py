@@ -4,91 +4,98 @@ import random
 import requests
 import os
 import io
+import json
+import base64
+import bcrypt  # LIBRERÍA DE SEGURIDAD
 from datetime import datetime
 from fpdf import FPDF
-import base64
 import plotly.express as px
 from streamlit_option_menu import option_menu
 import time
 
-# --- CONFIGURACIÓN GLOBAL ---
+# --- CONFIGURACIÓN ---
 st.set_page_config(page_title="TalentPro ERP", layout="wide", page_icon="🔒")
-
-# ESTILOS CSS
-st.markdown("""
-    <style>
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    .stMetric {background-color: #ffffff; border: 1px solid #e6e6e6; padding: 15px; border-radius: 8px; box-shadow: 2px 2px 5px rgba(0,0,0,0.05);}
+st.markdown("""<style>
+    .stMetric {background-color: #ffffff; border: 1px solid #e6e6e6; padding: 15px; border-radius: 8px;}
     div.stButton > button:first-child { background-color: #003366; color: white; border-radius: 8px; font-weight: bold;}
     [data-testid="stSidebar"] { padding-top: 0rem; }
-    .login-box { padding: 2rem; border-radius: 10px; background-color: #f0f2f6; text-align: center; }
-    </style>
-""", unsafe_allow_html=True)
+</style>""", unsafe_allow_html=True)
 
 # ==============================================================================
-# 1. SISTEMA DE AUTENTICACIÓN (SEGURO SIN GOOGLE)
+# 1. GESTIÓN DE USUARIOS SEGURA (GITHUB + BCRYPT)
 # ==============================================================================
 
-# Intentar cargar credenciales desde Secrets
-try:
-    SUPER_ADMIN_USER = st.secrets["auth"]["admin_user"]
-    SUPER_ADMIN_PASS = st.secrets["auth"]["admin_pass"]
-except:
-    # Fallback de emergencia por si no se configuran los secrets aún
-    SUPER_ADMIN_USER = "admin"
-    SUPER_ADMIN_PASS = "admin"
+def cargar_usuarios_github():
+    """Descarga y desencripta la base de usuarios"""
+    try:
+        headers = {"Authorization": f"token {st.secrets['github']['token']}", "Accept": "application/vnd.github.v3+json"}
+        r = requests.get(st.secrets['github']['url_usuarios'], headers=headers)
+        if r.status_code == 200:
+            content = base64.b64decode(r.json()['content']).decode('utf-8')
+            return json.loads(content), r.json()['sha']
+        else:
+            # Si falla, retorna usuario default en memoria (solo emergencia)
+            hashed = bcrypt.hashpw("Max1234".encode(), bcrypt.gensalt()).decode()
+            return {"ehafemann@talentpro-latam.com": {"name": "Emilio H.", "role": "Super Admin", "password_hash": hashed}}, None
+    except: return {}, None
 
-# Inicializar DB de usuarios en memoria
+def guardar_usuarios_github(users_dict, sha):
+    """Sube la base de usuarios encriptada a GitHub"""
+    try:
+        json_str = json.dumps(users_dict, indent=4)
+        content_b64 = base64.b64encode(json_str.encode()).decode()
+        data = {"message": "Update users db", "content": content_b64, "sha": sha}
+        headers = {"Authorization": f"token {st.secrets['github']['token']}", "Accept": "application/vnd.github.v3+json"}
+        r = requests.put(st.secrets['github']['url_usuarios'], headers=headers, json=data)
+        return r.status_code in [200, 201]
+    except: return False
+
+# Inicializar Estado
 if 'users_db' not in st.session_state:
-    st.session_state['users_db'] = {
-        SUPER_ADMIN_USER: {'pass': SUPER_ADMIN_PASS, 'role': 'Super Admin', 'name': 'Administrador'}
-    }
-else:
-    # Asegurar que el admin siempre esté actualizado con los secrets
-    st.session_state['users_db'][SUPER_ADMIN_USER] = {'pass': SUPER_ADMIN_PASS, 'role': 'Super Admin', 'name': 'Administrador'}
+    users, sha = cargar_usuarios_github()
+    # Autocorrección: Si el admin no tiene hash (primera vez), crearlo
+    admin_email = "ehafemann@talentpro-latam.com"
+    if admin_email not in users:
+        hashed = bcrypt.hashpw("Max1234".encode(), bcrypt.gensalt()).decode()
+        users[admin_email] = {"name": "Emilio H.", "role": "Super Admin", "password_hash": hashed}
+    
+    st.session_state['users_db'] = users
+    st.session_state['users_sha'] = sha
 
 if 'auth_status' not in st.session_state: st.session_state['auth_status'] = False
 if 'current_user' not in st.session_state: st.session_state['current_user'] = None
 if 'current_role' not in st.session_state: st.session_state['current_role'] = None
 
 def login_page():
-    c1, c2, c3 = st.columns([1, 2, 1])
+    c1,c2,c3 = st.columns([1,2,1])
     with c2:
         st.markdown("<br><br>", unsafe_allow_html=True)
-        # Intentar mostrar logo si existe, sino texto
-        if os.path.exists("logo_talentpro.jpg"):
-            st.image("logo_talentpro.jpg", width=300)
-        else:
-            st.markdown("## TalentPro ERP")
-            
-        st.markdown("### Acceso Corporativo")
-        
-        with st.form("login_form"):
-            username = st.text_input("Usuario")
-            password = st.text_input("Contraseña", type="password")
-            submit = st.form_submit_button("Ingresar", use_container_width=True)
-            
-            if submit:
-                user = st.session_state['users_db'].get(username)
-                if user and user['pass'] == password:
-                    st.session_state['auth_status'] = True
-                    st.session_state['current_user'] = username
-                    st.session_state['current_role'] = user['role']
-                    st.success("Acceso concedido")
-                    time.sleep(0.5)
-                    st.rerun()
-                else:
-                    st.error("Credenciales inválidas")
+        if os.path.exists("logo_talentpro.jpg"): st.image("logo_talentpro.jpg", width=300)
+        st.markdown("### Acceso Seguro")
+        with st.form("login"):
+            u = st.text_input("Usuario")
+            p = st.text_input("Contraseña", type="password")
+            if st.form_submit_button("Entrar", use_container_width=True):
+                user = st.session_state['users_db'].get(u)
+                if user:
+                    # VERIFICACIÓN DE HASH
+                    stored_hash = user.get('password_hash', '')
+                    try:
+                        if bcrypt.checkpw(p.encode(), stored_hash.encode()):
+                            st.session_state['auth_status'] = True
+                            st.session_state['current_user'] = u
+                            st.session_state['current_role'] = user['role']
+                            st.success("¡Bienvenido!"); time.sleep(0.5); st.rerun()
+                        else: st.error("Credenciales inválidas")
+                    except: st.error("Error de seguridad en cuenta. Contacte soporte.")
+                else: st.error("Credenciales inválidas")
 
 def logout():
-    st.session_state['auth_status'] = False
-    st.session_state['current_user'] = None
-    st.session_state['current_role'] = None
+    st.session_state.clear()
     st.rerun()
 
 # ==============================================================================
-# 2. RECURSOS Y CARGA DE DATOS
+# 2. RECURSOS Y DATOS
 # ==============================================================================
 LOGO_PATH = "logo_talentpro.jpg"
 @st.cache_resource
@@ -96,55 +103,28 @@ def descargar_logo():
     if not os.path.exists(LOGO_PATH):
         try:
             r = requests.get("https://bukwebapp-enterprise-chile.s3.amazonaws.com/talentpro/generals/logo_login/logo_login.jpg")
-            if r.status_code == 200: 
-                with open(LOGO_PATH, 'wb') as f: f.write(r.content)
+            if r.status_code == 200: with open(LOGO_PATH, 'wb') as f: f.write(r.content)
         except: pass
 descargar_logo()
 
-# BLOQUEO DE SEGURIDAD (Después de descargar logo para que se vea en login)
-if not st.session_state['auth_status']:
-    login_page()
-    st.stop()
+if not st.session_state['auth_status']: login_page(); st.stop()
 
 @st.cache_data(ttl=60)
 def cargar_datos_seguros():
-    """Conecta con la Bóveda Privada de GitHub usando Secrets"""
     try:
-        # Intentamos leer las credenciales de los Secrets de Streamlit
-        try:
-            token = st.secrets["github"]["token"]
-            url = st.secrets["github"]["url_precios"]
-        except:
-            # Si fallan los secrets, intentamos local (solo para emergencias)
-            if os.path.exists('precios.xlsx'):
-                xls = pd.ExcelFile('precios.xlsx')
-                return (pd.read_excel(xls, 'Pruebas Int'), pd.read_excel(xls, 'Servicios Int'), pd.read_excel(xls, 'Config'),
-                        pd.read_excel(xls, 'Pruebas_CL') if 'Pruebas_CL' in xls.sheet_names else pd.DataFrame(),
-                        pd.read_excel(xls, 'Servicios_CL') if 'Servicios_CL' in xls.sheet_names else pd.DataFrame(),
-                        pd.read_excel(xls, 'Pruebas_BR') if 'Pruebas_BR' in xls.sheet_names else pd.DataFrame(),
-                        pd.read_excel(xls, 'Servicios_BR') if 'Servicios_BR' in xls.sheet_names else pd.DataFrame())
-            else:
-                st.error("❌ Error de Seguridad: No se encontraron las credenciales en Secrets y no hay archivo local.")
-                st.stop()
-
-        # Conexión Segura
+        token = st.secrets["github"]["token"]
+        url = st.secrets["github"]["url_precios"]
         headers = {"Authorization": f"token {token}"}
-        response = requests.get(url, headers=headers)
-        
-        if response.status_code == 200:
-            xls = pd.ExcelFile(io.BytesIO(response.content))
+        r = requests.get(url, headers=headers)
+        if r.status_code == 200:
+            xls = pd.ExcelFile(io.BytesIO(r.content))
             return (pd.read_excel(xls, 'Pruebas Int'), pd.read_excel(xls, 'Servicios Int'), pd.read_excel(xls, 'Config'),
                     pd.read_excel(xls, 'Pruebas_CL') if 'Pruebas_CL' in xls.sheet_names else pd.DataFrame(),
                     pd.read_excel(xls, 'Servicios_CL') if 'Servicios_CL' in xls.sheet_names else pd.DataFrame(),
                     pd.read_excel(xls, 'Pruebas_BR') if 'Pruebas_BR' in xls.sheet_names else pd.DataFrame(),
                     pd.read_excel(xls, 'Servicios_BR') if 'Servicios_BR' in xls.sheet_names else pd.DataFrame())
-        else:
-            st.error(f"❌ Error conectando al repositorio privado: {response.status_code}")
-            st.stop()
-            
-    except Exception as e:
-        st.error(f"Error crítico de datos: {e}")
-        st.stop()
+        else: st.error("Error Repo Privado"); st.stop()
+    except: st.error("Error Datos"); st.stop()
 
 data = cargar_datos_seguros()
 df_p_usd, df_s_usd, df_config, df_p_cl, df_s_cl, df_p_br, df_s_br = data
@@ -162,9 +142,9 @@ def obtener_indicadores():
     return t
 TASAS = obtener_indicadores()
 
-# --- TEXTOS Y ENTIDADES ---
+# --- TEXTOS ---
 TEXTOS = {
-    "ES": {"title": "Cotizador", "client": "Cliente", "add": "Agregar", "desc": "Descripción", "qty": "Cant.", "unit": "Unitario", "total": "Total", "subtotal": "Subtotal", "fee": "Fee Admin (10%)", "grand_total": "TOTAL", "invoice_to": "Facturar a:", "quote": "COTIZACIÓN", "date": "Fecha", "validity": "Validez: 30 días", "save": "Guardar y Enviar", "download": "Descargar PDF", "sec_prod": "Assessments", "sec_serv": "Servicios", "discount": "Descuento", "tax": "Impuestos", "legal_intl": "Facturación a {pais}. Sumar impuestos retenidos y gastos OUR.", "noshow_title": "Política No-Show:", "noshow_text": "Multa 50% por inasistencia sin aviso 24h."},
+    "ES": {"title": "Cotizador", "client": "Cliente", "add": "Agregar", "desc": "Descripción", "qty": "Cant.", "unit": "Unitario", "total": "Total", "subtotal": "Subtotal", "fee": "Fee Admin (10%)", "grand_total": "TOTAL", "invoice_to": "Facturar a:", "quote": "COTIZACIÓN", "date": "Fecha", "validity": "Validez: 30 días", "save": "Guardar y Enviar", "download": "Descargar PDF", "sec_prod": "Licencias", "sec_serv": "Servicios", "discount": "Descuento", "tax": "Impuestos", "legal_intl": "Facturación a {pais}. Sumar impuestos retenidos y gastos OUR.", "noshow_title": "Política No-Show:", "noshow_text": "Multa 50% por inasistencia sin aviso 24h."},
     "EN": {"title": "Quote Tool", "client": "Client", "add": "Add", "desc": "Description", "qty": "Qty", "unit": "Price", "total": "Total", "subtotal": "Subtotal", "fee": "Admin Fee", "grand_total": "TOTAL", "invoice_to": "Bill to:", "quote": "QUOTATION", "date": "Date", "validity": "Valid: 30 days", "save": "Save & Send", "download": "Download PDF", "sec_prod": "Licenses", "sec_serv": "Services", "discount": "Discount", "tax": "Taxes", "legal_intl": "Billing to {pais}. Add withholding taxes and OUR bank fees.", "noshow_title": "No-Show Policy:", "noshow_text": "50% fee for absence without 24h notice."},
     "PT": {"title": "Cotação", "client": "Cliente", "add": "Adicionar", "desc": "Descrição", "qty": "Qtd", "unit": "Unitário", "total": "Total", "subtotal": "Subtotal", "fee": "Taxa Admin", "grand_total": "TOTAL", "invoice_to": "Faturar para:", "quote": "COTAÇÃO", "date": "Data", "validity": "Validade: 30 dias", "save": "Salvar e Enviar", "download": "Baixar PDF", "sec_prod": "Licenças", "sec_serv": "Serviços", "discount": "Desconto", "tax": "Impostos", "legal_intl": "Faturamento para {pais}. Adicionar impostos retidos e taxas bancárias.", "noshow_title": "Política No-Show:", "noshow_text": "Multa de 50% por ausência sem aviso de 24h."}
 }
@@ -179,7 +159,7 @@ EMPRESAS = {
 if 'cotizaciones' not in st.session_state: st.session_state['cotizaciones'] = pd.DataFrame(columns=['id', 'fecha', 'empresa', 'pais', 'total', 'moneda', 'estado', 'vendedor'])
 if 'carrito' not in st.session_state: st.session_state['carrito'] = []
 
-# --- FUNCIONES CORE ---
+# --- FUNCIONES NEGOCIO ---
 def obtener_contexto(pais):
     if pais == "Chile": return {"mon": "UF", "dp": df_p_cl, "ds": df_s_cl, "tipo": "Loc"}
     if pais in ["Brasil", "Brazil"]: return {"mon": "R$", "dp": df_p_br, "ds": df_s_br, "tipo": "Loc"}
@@ -216,7 +196,6 @@ def get_empresa(pais, items):
     if pais=="Chile": return EMPRESAS["Chile_Pruebas"] if any(i['Ítem']=='Evaluación' for i in items) else EMPRESAS["Chile_Servicios"]
     return EMPRESAS["Latam"]
 
-# --- PDF ---
 class PDF(FPDF):
     def header(self):
         if os.path.exists(LOGO_PATH): self.image(LOGO_PATH, 10, 10, 35)
@@ -265,15 +244,11 @@ def generar_pdf_final(emp, cli, items, calc, lang, extras, tit):
     pdf.set_text_color(100); pdf.cell(0,5,t['validity'],0,1)
     return pdf.output(dest='S').encode('latin-1')
 
-# ==============================================================================
-# 3. MÓDULOS (VISTAS)
-# ==============================================================================
-
+# --- MÓDULOS ---
 def modulo_cotizador():
     cl, ct = st.columns([1,5]); idi = cl.selectbox("🌐", ["ES","EN","PT"]); txt = TEXTOS[idi]; ct.title(txt['title'])
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("UF (CL)", f"${TASAS['UF']:,.0f}"); k2.metric("USD (CL)", f"${TASAS['USD_CLP']:,.0f}"); k3.metric("USD (BR)", f"R$ {TASAS['USD_BRL']:.2f}")
-    
+    k1.metric("UF", f"${TASAS['UF']:,.0f}"); k2.metric("USD", f"${TASAS['USD_CLP']:,.0f}"); k3.metric("BRL", f"{TASAS['USD_BRL']:.2f}")
     st.markdown("---")
     c1, c2 = st.columns([1,2]); idx = TODOS_LOS_PAISES.index("Chile") if "Chile" in TODOS_LOS_PAISES else 0
     ps = c1.selectbox("🌎 País", TODOS_LOS_PAISES, index=idx); ctx = obtener_contexto(ps)
@@ -315,7 +290,6 @@ def modulo_cotizador():
             fee=st.checkbox(txt['fee'],False); bnk=st.number_input("Bank Fee",0.0,value=30.0 if mon=="US$" else 0.0); dsc=st.number_input(txt['discount'],0.0)
             vfee=eva*0.10 if fee else 0; tn,tv=get_impuestos(ps,sub,eva); fin=sub+vfee+tv+bnk-dsc
             st.metric(txt['grand_total'],f"{mon} {fin:,.2f}")
-            
             if st.button(txt['save'],type="primary"):
                 if not emp: st.error("Falta Empresa"); return
                 nid=f"TP-{random.randint(1000,9999)}"; cli={'empresa':emp,'contacto':con,'email':ema}
@@ -334,7 +308,6 @@ def modulo_cotizador():
                 
                 b64=base64.b64encode(pdf_b).decode('latin-1')
                 st.markdown(f'<a href="data:application/pdf;base64,{b64}" download="Cot_{nid}.pdf" class="stButton">{txt["download"]}</a>',unsafe_allow_html=True)
-                
                 st.session_state['cotizaciones']=pd.concat([st.session_state['cotizaciones'], pd.DataFrame([{
                     'id':nid, 'fecha':datetime.now().strftime("%Y-%m-%d"), 'empresa':emp, 'pais':ps,
                     'total':fin, 'moneda':mon, 'estado':'Enviada', 'vendedor':ven, 'idioma':idi
@@ -383,10 +356,26 @@ def modulo_admin():
     st.title("👥 Usuarios"); st.write(f"Admin: {st.session_state['current_user']}")
     with st.form("new_user"):
         st.write("Crear Nuevo Usuario"); nu=st.text_input("Email"); np=st.text_input("Pass",type="password"); nr=st.selectbox("Rol",["Comercial","Finanzas","Super Admin"])
-        if st.form_submit_button("Crear"): st.session_state['users_db'][nu]={'pass':np,'role':nr,'name':nu}; st.success(f"Creado: {nu}")
-    st.write("Base de Datos (Sesión):"); st.json(st.session_state['users_db'])
+        if st.form_submit_button("Crear"):
+            hashed = bcrypt.hashpw(np.encode(), bcrypt.gensalt()).decode()
+            new_users = st.session_state['users_db'].copy()
+            new_users[nu] = {'pass': np, 'role': nr, 'name': nu, 'password_hash': hashed}
+            if guardar_usuarios_github(new_users, st.session_state['users_sha']):
+                st.success(f"Creado: {nu}"); time.sleep(1); st.rerun()
+            else: st.error("Error al guardar en GitHub")
+    
+    with st.expander("Cambiar mi Contraseña"):
+        with st.form("change_pass"):
+            p1=st.text_input("Nueva Contraseña",type="password"); p2=st.text_input("Confirmar",type="password")
+            if st.form_submit_button("Cambiar"):
+                if p1==p2 and p1:
+                    h = bcrypt.hashpw(p1.encode(), bcrypt.gensalt()).decode()
+                    usrs = st.session_state['users_db'].copy()
+                    usrs[st.session_state['current_user']]['password_hash'] = h
+                    if guardar_usuarios_github(usrs, st.session_state['users_sha']): st.success("Contraseña actualizada"); st.rerun()
+                else: st.error("No coinciden")
 
-# --- APP ---
+# --- MENU ---
 with st.sidebar:
     if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=130)
     role = st.session_state.get('current_role', 'Comercial')

@@ -286,7 +286,7 @@ def cotizador():
     email = cc3.text_input("Email")
     vendedor = cc4.selectbox("Ejecutivo", ["Comercial 1", "Comercial 2"])
 
-    # 3. ITEMS
+     # 3. ITEMS
     st.markdown("---")
     tp, ts = st.tabs(["🧩 Evaluaciones", "💼 Servicios"])
     
@@ -299,4 +299,128 @@ def cotizador():
             es_loc = (ctx['tipo'] == 'Local')
             up = calc_excel(ctx['df_p'], sel_p, cant_p, es_loc)
             cp3.metric(txt['unit'], f"{ctx['moneda']} {up:,.2f}")
-            if cp
+            if cp4.button(txt['add'], key="add_p"):
+                st.session_state['carrito'].append({"Ítem": "Evaluación", "Desc": sel_p, "Det": f"x{cant_p}", "Moneda": ctx['moneda'], "Unit": up, "Total": up*cant_p})
+                st.rerun()
+
+    with ts:
+        cs1, cs2, cs3, cs4 = st.columns([3, 2, 1, 1])
+        lst_s_xls = ctx['df_s']['Servicio'].unique().tolist() if not ctx['df_s'].empty else []
+        lst_full = ["Certificación PAA (Transversal)"] + lst_s_xls
+        
+        if lst_full:
+            sel_s = cs1.selectbox("Servicio", lst_full, key="s_sel")
+            
+            if sel_s == "Certificación PAA (Transversal)":
+                cant_s = cs2.number_input("Personas", 1, 1000, 1, key="s_cant")
+                us, _ = calcular_paa(cant_s, ctx['moneda'])
+                det_txt = f"{cant_s} pers"
+            else:
+                c_rol, c_qty = cs2.columns(2)
+                rol = c_rol.selectbox("Rol", ['Angelica', 'Senior', 'BM', 'BP'])
+                cant_s = c_qty.number_input(txt['qty'], 1, 1000, 1)
+                
+                # Buscar precio servicio
+                us = 0.0
+                if ctx['tipo'] == "Internacional":
+                    row = ctx['df_s'][(ctx['df_s']['Servicio']==sel_s) & (ctx['df_s']['Nivel']==ctx['nivel'])]
+                else:
+                    row = ctx['df_s'][ctx['df_s']['Servicio']==sel_s]
+                
+                if not row.empty: us = float(row.iloc[0][rol]) if rol in row.columns else 0.0
+                det_txt = f"{rol} ({cant_s})"
+
+            cs3.metric(txt['unit'], f"{ctx['moneda']} {us:,.2f}")
+            if cs4.button(txt['add'], key="add_s"):
+                st.session_state['carrito'].append({"Ítem": "Servicio", "Desc": sel_s, "Det": det_txt, "Moneda": ctx['moneda'], "Unit": us, "Total": us*cant_s})
+                st.rerun()
+
+    # 4. RESUMEN
+    if st.session_state['carrito']:
+        st.markdown("---")
+        df_c = pd.DataFrame(st.session_state['carrito'])
+        
+        if len(df_c['Moneda'].unique()) > 1:
+            st.error("Error: Monedas mezcladas.")
+        else:
+            mon = df_c['Moneda'].unique()[0]
+            st.dataframe(df_c[['Desc', 'Det', 'Unit', 'Total']], use_container_width=True)
+            
+            subtotal = df_c['Total'].sum()
+            tot_eval = df_c[df_c['Ítem']=='Evaluación']['Total'].sum()
+            
+            col_L, col_R = st.columns([3, 1])
+            with col_R:
+                fee = st.checkbox(txt['fee'], value=False)
+                comision = st.number_input("Bank Fee", 0.0, value=30.0 if mon=="US$" else 0.0)
+                desc = st.number_input(txt['discount'], 0.0)
+                
+                val_fee = tot_eval * 0.10 if fee else 0.0
+                tax_name, val_tax = calcular_impuestos(pais_sel, subtotal, tot_eval)
+                
+                final = subtotal + val_fee + val_tax + comision - desc
+                
+                st.markdown(f"""
+                **{txt['subtotal']}:** {mon} {subtotal:,.2f}  
+                **{txt['fee']}:** {mon} {val_fee:,.2f}  
+                **{tax_name}:** {mon} {val_tax:,.2f}  
+                **Bank:** {mon} {comision:,.2f}  
+                **{txt['discount']}:** -{mon} {desc:,.2f}  
+                ### {txt['grand_total']}: {mon} {final:,.2f}
+                """)
+                
+                # Determinar Empresa Emisora
+                entidad = determinar_empresa_facturadora(pais_sel, st.session_state['carrito'])
+                st.caption(f"Emisor: {entidad['Nombre']}")
+
+                # GUARDAR
+                if st.button(txt['save'], type="primary"):
+                    if not empresa: st.error("Error: Falta Empresa")
+                    else:
+                        nid = f"TP-{random.randint(1000,9999)}"
+                        # LOGICA PDF
+                        calculos = {'subtotal':subtotal, 'fee':val_fee, 'tax_name':tax_name, 'tax_val':val_tax, 'total':final}
+                        cliente_data = {'empresa':empresa, 'contacto':contacto, 'email':email}
+                        
+                        pdf_bytes = generar_pdf(entidad, cliente_data, st.session_state['carrito'], calculos, idioma)
+                        b64 = base64.b64encode(pdf_bytes).decode('latin-1')
+                        href = f'<a href="data:application/pdf;base64,{b64}" download="Cotizacion_{nid}.pdf" class="stButton">{txt["download"]}</a>'
+                        st.markdown(href, unsafe_allow_html=True)
+                        
+                        # Guardar en DB
+                        st.session_state['cotizaciones'] = pd.concat([st.session_state['cotizaciones'], pd.DataFrame([{
+                            'id': nid, 'fecha': datetime.now().strftime("%Y-%m-%d"), 'empresa': empresa, 'pais': pais_sel,
+                            'total': final, 'moneda': mon, 'estado': 'Enviada', 'vendedor': vendedor
+                        }])], ignore_index=True)
+                        st.session_state['carrito'] = []
+                        st.success(f"OK: {nid}")
+            
+            with col_L:
+                if st.button("🗑️"):
+                    st.session_state['carrito'] = []
+                    st.rerun()
+
+# --- MODULOS ADICIONALES ---
+def dashboard():
+    st.title("📊 Dashboard")
+    df = st.session_state['cotizaciones']
+    if df.empty: st.info("No data"); return
+    c1, c2 = st.columns(2)
+    c1.dataframe(df.groupby('moneda')['total'].sum())
+    c2.metric("Total Cotizaciones", len(df))
+
+def finanzas():
+    st.title("💰 Finanzas")
+    df = st.session_state['cotizaciones']
+    if df.empty: return
+    edited = st.data_editor(df, disabled=["id","empresa"], hide_index=True)
+    if not edited.equals(df): st.session_state['cotizaciones'] = edited
+
+# --- MENU ---
+with st.sidebar:
+    st.title("TalentPro")
+    op = st.radio("Menu", ["Cotizador", "Dashboard", "Finanzas"])
+
+if op == "Cotizador": cotizador()
+elif op == "Dashboard": dashboard()
+elif op == "Finanzas": finanzas()

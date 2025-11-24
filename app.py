@@ -22,9 +22,8 @@ st.markdown("""<style>
 </style>""", unsafe_allow_html=True)
 
 # ==============================================================================
-# 1. GESTIÓN DE USUARIOS (GITHUB + BCRYPT)
+# 1. GESTIÓN DE USUARIOS
 # ==============================================================================
-
 def cargar_usuarios_github():
     try:
         headers = {"Authorization": f"token {st.secrets['github']['token']}", "Accept": "application/vnd.github.v3+json"}
@@ -33,7 +32,6 @@ def cargar_usuarios_github():
             content = base64.b64decode(r.json()['content']).decode('utf-8')
             return json.loads(content), r.json()['sha']
         else:
-            # Fallback solo para inicializar
             hashed = bcrypt.hashpw("Max1234".encode(), bcrypt.gensalt()).decode()
             return {"ehafemann@talentpro-latam.com": {"name": "Emilio H.", "role": "Super Admin", "password_hash": hashed}}, None
     except: return {}, None
@@ -73,9 +71,8 @@ def login_page():
             if st.form_submit_button("Entrar", use_container_width=True):
                 user = st.session_state['users_db'].get(u)
                 if user:
-                    stored_hash = user.get('password_hash', '')
                     try:
-                        if bcrypt.checkpw(p.encode(), stored_hash.encode()):
+                        if bcrypt.checkpw(p.encode(), user.get('password_hash','').encode()):
                             st.session_state['auth_status'] = True
                             st.session_state['current_user'] = u
                             st.session_state['current_role'] = user['role']
@@ -83,7 +80,7 @@ def login_page():
                             time.sleep(0.5)
                             st.rerun()
                         else: st.error("Credenciales inválidas")
-                    except: st.error("Error de hash. Contacte soporte.")
+                    except: st.error("Error de hash")
                 else: st.error("Credenciales inválidas")
 
 def logout():
@@ -100,8 +97,7 @@ def descargar_logo():
         try:
             r = requests.get("https://bukwebapp-enterprise-chile.s3.amazonaws.com/talentpro/generals/logo_login/logo_login.jpg")
             if r.status_code == 200: 
-                with open(LOGO_PATH, 'wb') as f:
-                    f.write(r.content)
+                with open(LOGO_PATH, 'wb') as f: f.write(r.content)
         except: pass
 descargar_logo()
 
@@ -141,9 +137,9 @@ def obtener_indicadores():
 TASAS = obtener_indicadores()
 
 TEXTOS = {
-    "ES": {"title": "Cotizador", "client": "Cliente", "add": "Agregar", "desc": "Descripción", "qty": "Cant.", "unit": "Unitario", "total": "Total", "subtotal": "Subtotal", "fee": "Fee Admin (10%)", "grand_total": "TOTAL", "invoice_to": "Facturar a:", "quote": "COTIZACIÓN", "date": "Fecha", "validity": "Validez: 30 días", "save": "Guardar y Enviar", "download": "Descargar PDF", "sec_prod": "Licencias", "sec_serv": "Servicios", "discount": "Descuento", "tax": "Impuestos", "legal_intl": "Facturación a {pais}. Sumar impuestos retenidos y gastos OUR.", "noshow_title": "Política No-Show:", "noshow_text": "Multa 50% por inasistencia sin aviso 24h."},
-    "EN": {"title": "Quote Tool", "client": "Client", "add": "Add", "desc": "Description", "qty": "Qty", "unit": "Price", "total": "Total", "subtotal": "Subtotal", "fee": "Admin Fee", "grand_total": "TOTAL", "invoice_to": "Bill to:", "quote": "QUOTATION", "date": "Date", "validity": "Valid: 30 days", "save": "Save & Send", "download": "Download PDF", "sec_prod": "Licenses", "sec_serv": "Services", "discount": "Discount", "tax": "Taxes", "legal_intl": "Billing to {pais}. Add withholding taxes and OUR bank fees.", "noshow_title": "No-Show Policy:", "noshow_text": "50% fee for absence without 24h notice."},
-    "PT": {"title": "Cotação", "client": "Cliente", "add": "Adicionar", "desc": "Descrição", "qty": "Qtd", "unit": "Unitário", "total": "Total", "subtotal": "Subtotal", "fee": "Taxa Admin", "grand_total": "TOTAL", "invoice_to": "Faturar para:", "quote": "COTAÇÃO", "date": "Data", "validity": "Validade: 30 dias", "save": "Salvar e Enviar", "download": "Baixar PDF", "sec_prod": "Licenças", "sec_serv": "Serviços", "discount": "Desconto", "tax": "Impostos", "legal_intl": "Faturamento para {pais}. Adicionar impostos retidos e taxas bancárias.", "noshow_title": "Política No-Show:", "noshow_text": "Multa de 50% por ausência sem aviso de 24h."}
+    "ES": {"title": "Cotizador", "client": "Cliente", "add": "Agregar", "desc": "Descripción", "qty": "Cant.", "unit": "Unitario", "total": "Total", "subtotal": "Subtotal", "fee": "Fee Admin (10%)", "grand_total": "TOTAL", "invoice_to": "Facturar a:", "quote": "COTIZACIÓN", "date": "Fecha", "validity": "Validez: 30 días", "save": "Generar Cotización", "download": "Descargar", "sec_prod": "Licencias", "sec_serv": "Servicios", "discount": "Descuento", "tax": "Impuestos", "legal_intl": "Facturación a {pais}. Sumar impuestos retenidos y gastos OUR.", "noshow_title": "Política No-Show:", "noshow_text": "Multa 50% por inasistencia sin aviso 24h."},
+    "EN": {"title": "Quote Tool", "client": "Client", "add": "Add", "desc": "Description", "qty": "Qty", "unit": "Price", "total": "Total", "subtotal": "Subtotal", "fee": "Admin Fee", "grand_total": "TOTAL", "invoice_to": "Bill to:", "quote": "QUOTATION", "date": "Date", "validity": "Valid: 30 days", "save": "Generate Quote", "download": "Download", "sec_prod": "Licenses", "sec_serv": "Services", "discount": "Discount", "tax": "Taxes", "legal_intl": "Billing to {pais}. Add withholding taxes and OUR bank fees.", "noshow_title": "No-Show Policy:", "noshow_text": "50% fee for absence without 24h notice."},
+    "PT": {"title": "Cotação", "client": "Cliente", "add": "Adicionar", "desc": "Descrição", "qty": "Qtd", "unit": "Unitário", "total": "Total", "subtotal": "Subtotal", "fee": "Taxa Admin", "grand_total": "TOTAL", "invoice_to": "Faturar para:", "quote": "COTAÇÃO", "date": "Data", "validity": "Validade: 30 dias", "save": "Gerar Cotação", "download": "Baixar", "sec_prod": "Licenças", "sec_serv": "Serviços", "discount": "Desconto", "tax": "Impostos", "legal_intl": "Faturamento para {pais}. Adicionar impostos retidos e taxas bancárias.", "noshow_title": "Política No-Show:", "noshow_text": "Multa de 50% por ausência sem aviso de 24h."}
 }
 EMPRESAS = {
     "Brasil": {"Nombre": "TalentPRO Brasil Ltda.", "ID": "CNPJ: 49.704.046/0001-80", "Dir": "Av. Marcos Penteado 939, Tamboré", "Giro": "Consultoria"},
@@ -156,6 +152,7 @@ EMPRESAS = {
 if 'cotizaciones' not in st.session_state: st.session_state['cotizaciones'] = pd.DataFrame(columns=['id', 'fecha', 'empresa', 'pais', 'total', 'moneda', 'estado', 'vendedor'])
 if 'carrito' not in st.session_state: st.session_state['carrito'] = []
 
+# --- FUNCIONES ---
 def obtener_contexto(pais):
     if pais == "Chile": return {"mon": "UF", "dp": df_p_cl, "ds": df_s_cl, "tipo": "Loc"}
     if pais in ["Brasil", "Brazil"]: return {"mon": "R$", "dp": df_p_br, "ds": df_s_br, "tipo": "Loc"}
@@ -192,6 +189,7 @@ def get_empresa(pais, items):
     if pais=="Chile": return EMPRESAS["Chile_Pruebas"] if any(i['Ítem']=='Evaluación' for i in items) else EMPRESAS["Chile_Servicios"]
     return EMPRESAS["Latam"]
 
+# --- PDF GENERATOR ---
 class PDF(FPDF):
     def header(self):
         if os.path.exists(LOGO_PATH): self.image(LOGO_PATH, 10, 10, 35)
@@ -210,6 +208,7 @@ def generar_pdf_final(emp, cli, items, calc, lang, extras, tit):
     pdf.ln(5); pdf.set_xy(105,pdf.get_y()); pdf.set_text_color(0,51,102)
     pdf.cell(95,5,f"{t['date']}: {datetime.now().strftime('%d/%m/%Y')} | ID: {extras['id']}",0,1); pdf.ln(10)
     
+    # Tabla
     pdf.set_fill_color(0,51,102); pdf.set_text_color(255); pdf.set_font("Arial",'B',9)
     pdf.cell(110,8,t['desc'],0,0,'L',1); pdf.cell(20,8,t['qty'],0,0,'C',1); pdf.cell(30,8,t['unit'],0,0,'R',1); pdf.cell(30,8,t['total'],0,1,'R',1)
     pdf.set_text_color(0); pdf.set_font("Arial",'',8); mon=items[0]['Moneda']
@@ -219,6 +218,7 @@ def generar_pdf_final(emp, cli, items, calc, lang, extras, tit):
         pdf.cell(30,7,f"{i['Unit']:,.2f}",'B',0,'R'); pdf.cell(30,7,f"{i['Total']:,.2f}",'B',1,'R')
     pdf.ln(5)
     
+    # Totales
     x=120
     def r(l,v,b=False):
         pdf.set_x(x); pdf.set_font("Arial",'B' if b else '',10); pdf.set_text_color(0 if not b else 255)
@@ -240,17 +240,19 @@ def generar_pdf_final(emp, cli, items, calc, lang, extras, tit):
     pdf.set_text_color(100); pdf.cell(0,5,t['validity'],0,1)
     return pdf.output(dest='S').encode('latin-1')
 
-# --- UI ---
+# --- MODULOS ---
 def modulo_cotizador():
     cl, ct = st.columns([1,5]); idi = cl.selectbox("🌐", ["ES","EN","PT"]); txt = TEXTOS[idi]; ct.title(txt['title'])
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("UF (CL)", f"${TASAS['UF']:,.0f}"); k2.metric("USD (CL)", f"${TASAS['USD_CLP']:,.0f}"); k3.metric("USD (BR)", f"R$ {TASAS['USD_BRL']:.2f}")
+    k1.metric("UF", f"${TASAS['UF']:,.0f}"); k2.metric("USD (CL)", f"${TASAS['USD_CLP']:,.0f}"); k3.metric("BRL", f"{TASAS['USD_BRL']:.2f}")
     st.markdown("---")
     c1, c2 = st.columns([1,2]); idx = TODOS_LOS_PAISES.index("Chile") if "Chile" in TODOS_LOS_PAISES else 0
     ps = c1.selectbox("🌎 País", TODOS_LOS_PAISES, index=idx); ctx = obtener_contexto(ps)
     c2.info(f"Moneda: **{ctx['mon']}** | Tarifas: **{ctx['tipo']}** {ctx.get('niv','')}")
+    
     st.markdown("---"); cc1,cc2,cc3,cc4=st.columns(4)
     emp=cc1.text_input(txt['client']); con=cc2.text_input("Contacto"); ema=cc3.text_input("Email"); ven=cc4.selectbox("Ejecutivo",["Comercial 1","Comercial 2"])
+    
     st.markdown("---"); tp, ts = st.tabs([txt['sec_prod'], txt['sec_serv']])
     with tp:
         c1,c2,c3,c4=st.columns([3,1,1,1]); lp=ctx['dp']['Producto'].unique().tolist() if not ctx['dp'].empty else []
@@ -283,22 +285,48 @@ def modulo_cotizador():
             fee=st.checkbox(txt['fee'],False); bnk=st.number_input("Bank Fee",0.0,value=30.0 if mon=="US$" else 0.0); dsc=st.number_input(txt['discount'],0.0)
             vfee=eva*0.10 if fee else 0; tn,tv=get_impuestos(ps,sub,eva); fin=sub+vfee+tv+bnk-dsc
             st.metric(txt['grand_total'],f"{mon} {fin:,.2f}")
+            
             if st.button(txt['save'],type="primary"):
                 if not emp: st.error("Falta Empresa"); return
                 nid=f"TP-{random.randint(1000,9999)}"; cli={'empresa':emp,'contacto':con,'email':ema}
                 ext={'fee':fee,'bank':bnk,'desc':dsc,'pais':ps,'id':nid}
-                pdf_b=None
+                
                 pr, sv = [x for x in st.session_state['carrito'] if x['Ítem']=='Evaluación'], [x for x in st.session_state['carrito'] if x['Ítem']=='Servicio']
-                if ps=="Chile" and pr and sv:
-                    ex2=ext.copy(); ex2['fee']=False
-                    pdf_b = generar_pdf_final(EMPRESAS['Chile_Servicios'],cli,sv,{'subtotal':sum(x['Total'] for x in sv),'fee':0,'tax_val':0,'tax_name':'','total':sum(x['Total'] for x in sv)+bnk-dsc},idi,ex2,txt['quote'])
-                    st.warning("⚠️ Chile Mixto: Generando PDF Servicios. Crea cotización aparte para Pruebas.")
+                
+                # --- LÓGICA DE PDFS ---
+                links_html = ""
+                
+                if ps == "Chile" and pr and sv:
+                    # Generar 2 PDFs
+                    st.info("🇨🇱 Chile Mixto detectado: Generando 2 cotizaciones separadas (SPA y Ltda).")
+                    
+                    # 1. PDF Pruebas (SPA)
+                    sub_p = sum(x['Total'] for x in pr)
+                    fee_p = sub_p * 0.10 if fee else 0
+                    tax_p = sub_p * 0.19 # IVA
+                    tot_p = sub_p + fee_p + tax_p
+                    calc_p = {'subtotal': sub_p, 'fee': fee_p, 'tax_name': 'IVA (19%)', 'tax_val': tax_p, 'total': tot_p}
+                    pdf_p = generar_pdf_final(EMPRESAS['Chile_Pruebas'], cli, pr, calc_p, idi, {'id': f"{nid}-P", 'pais':ps}, f"{txt['quote']} - Pruebas")
+                    b64_p = base64.b64encode(pdf_p).decode('latin-1')
+                    links_html += f'<a href="data:application/pdf;base64,{b64_p}" download="Cot_{nid}_Pruebas.pdf" style="background:#003366;color:white;padding:10px;border-radius:5px;text-decoration:none;margin-right:10px;">📄 Descargar Pruebas</a>'
+                    
+                    # 2. PDF Servicios (Ltda)
+                    sub_s = sum(x['Total'] for x in sv)
+                    tot_s = sub_s + bnk - dsc
+                    calc_s = {'subtotal': sub_s, 'fee': 0, 'tax_name': '', 'tax_val': 0, 'bank': bnk, 'desc': dsc, 'total': tot_s}
+                    pdf_s = generar_pdf_final(EMPRESAS['Chile_Servicios'], cli, sv, calc_s, idi, {'id': f"{nid}-S", 'pais':ps}, f"{txt['quote']} - Servicios")
+                    b64_s = base64.b64encode(pdf_s).decode('latin-1')
+                    links_html += f'<a href="data:application/pdf;base64,{b64_s}" download="Cot_{nid}_Servicios.pdf" style="background:#003366;color:white;padding:10px;border-radius:5px;text-decoration:none;">📄 Descargar Servicios</a>'
+                    
                 else:
-                    ent=get_empresa(ps,st.session_state['carrito'])
+                    # Caso Normal (1 PDF)
+                    ent = get_empresa(ps,st.session_state['carrito'])
                     calc={'subtotal':sub,'fee':vfee,'tax_name':tn,'tax_val':tv,'total':fin}
                     pdf_b = generar_pdf_final(ent,cli,st.session_state['carrito'],calc,idi,ext,txt['quote'])
-                b64=base64.b64encode(pdf_b).decode('latin-1')
-                st.markdown(f'<a href="data:application/pdf;base64,{b64}" download="Cot_{nid}.pdf" class="stButton">{txt["download"]}</a>',unsafe_allow_html=True)
+                    b64=base64.b64encode(pdf_b).decode('latin-1')
+                    links_html = f'<a href="data:application/pdf;base64,{b64}" download="Cotizacion_{nid}.pdf" style="background:#003366;color:white;padding:10px;border-radius:5px;text-decoration:none;">{txt["download"]}</a>'
+
+                st.markdown(links_html, unsafe_allow_html=True)
                 st.session_state['cotizaciones']=pd.concat([st.session_state['cotizaciones'], pd.DataFrame([{
                     'id':nid, 'fecha':datetime.now().strftime("%Y-%m-%d"), 'empresa':emp, 'pais':ps,
                     'total':fin, 'moneda':mon, 'estado':'Enviada', 'vendedor':ven, 'idioma':idi

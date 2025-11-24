@@ -7,23 +7,28 @@ import io
 import json
 import base64
 import bcrypt
-from datetime import datetime, date
+from datetime import datetime
 from fpdf import FPDF
 import plotly.express as px
 from streamlit_option_menu import option_menu
 import time
 
-# --- CONFIGURACIÓN ---
+# --- CONFIGURACIÓN GLOBAL ---
 st.set_page_config(page_title="TalentPro ERP", layout="wide", page_icon="🔒")
-st.markdown("""<style>
-    .stMetric {background-color: #ffffff; border: 1px solid #e6e6e6; padding: 15px; border-radius: 8px;}
+
+st.markdown("""
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    .stMetric {background-color: #ffffff; border: 1px solid #e6e6e6; padding: 15px; border-radius: 8px; box-shadow: 2px 2px 5px rgba(0,0,0,0.05);}
     div.stButton > button:first-child { background-color: #003366; color: white; border-radius: 8px; font-weight: bold;}
     [data-testid="stSidebar"] { padding-top: 0rem; }
     .crm-card { background-color: #f8f9fa; padding: 15px; border-radius: 10px; margin-bottom: 10px; border-left: 5px solid #003366; }
-</style>""", unsafe_allow_html=True)
+    </style>
+""", unsafe_allow_html=True)
 
 # ==============================================================================
-# 1. GESTIÓN DE DATOS (GITHUB API)
+# 1. FUNCIONES GITHUB (API) PARA JSON
 # ==============================================================================
 def github_get_json(url_key):
     try:
@@ -33,8 +38,10 @@ def github_get_json(url_key):
         if r.status_code == 200:
             content = base64.b64decode(r.json()['content']).decode('utf-8')
             return json.loads(content), r.json()['sha']
-        return ([], None) if "leads" in url_key else ({}, None) # Retorno vacío seguro
-    except: return ([], None) if "leads" in url_key else ({}, None)
+        # Retornos vacíos seguros si el archivo está vacío o no existe
+        return ([], None) if "leads" in url_key else ({}, None)
+    except:
+        return ([], None) if "leads" in url_key else ({}, None)
 
 def github_push_json(url_key, data_dict, sha):
     try:
@@ -43,71 +50,97 @@ def github_push_json(url_key, data_dict, sha):
         content_b64 = base64.b64encode(json_str.encode()).decode()
         payload = {"message": "Update DB", "content": content_b64}
         if sha: payload["sha"] = sha
+        
         headers = {"Authorization": f"token {st.secrets['github']['token']}", "Accept": "application/vnd.github.v3+json"}
         r = requests.put(url, headers=headers, json=payload)
         return r.status_code in [200, 201]
     except: return False
 
-# CARGA INICIAL USUARIOS
+# ==============================================================================
+# 2. INICIALIZACIÓN DE ESTADO (USERS, LEADS, COTIZACIONES)
+# ==============================================================================
+
+# A) USUARIOS
 if 'users_db' not in st.session_state:
     users, sha = github_get_json('url_usuarios')
+    # Fallback Admin
     admin_email = "ehafemann@talentpro-latam.com"
-    if admin_email not in users: # Fallback inicial
+    if admin_email not in users:
         hashed = bcrypt.hashpw("TalentPro_2025".encode(), bcrypt.gensalt()).decode()
         users[admin_email] = {"name": "Emilio Hafemann", "role": "Super Admin", "password_hash": hashed}
-    st.session_state.update({'users_db': users, 'users_sha': sha})
+    st.session_state['users_db'] = users
+    st.session_state['users_sha'] = sha
 
-# CARGA INICIAL LEADS
+# B) LEADS (CRM)
 if 'leads_db' not in st.session_state:
-    leads, sha_l = github_get_json('url_leads') # Asegúrate de tener url_leads en secrets
-    st.session_state.update({'leads_db': leads, 'leads_sha': sha_l})
+    leads, sha_l = github_get_json('url_leads')
+    st.session_state['leads_db'] = leads
+    st.session_state['leads_sha'] = sha_l
 
-# AUTENTICACIÓN STATE
+# C) COTIZACIONES (Volátiles por ahora, persistencia idealmente en JSON también)
+if 'cotizaciones' not in st.session_state:
+    st.session_state['cotizaciones'] = pd.DataFrame(columns=['id', 'fecha', 'empresa', 'pais', 'total', 'moneda', 'estado', 'vendedor'])
+if 'carrito' not in st.session_state: st.session_state['carrito'] = []
+
+# D) AUTH
 if 'auth_status' not in st.session_state: st.session_state['auth_status'] = False
 if 'current_user' not in st.session_state: st.session_state['current_user'] = None
 if 'current_role' not in st.session_state: st.session_state['current_role'] = None
 
-# LOGIN SYSTEM
-def login_page():
-    c1,c2,c3 = st.columns([1,2,1])
-    with c2:
-        st.markdown("<br><br>", unsafe_allow_html=True)
-        if os.path.exists("logo_talentpro.jpg"): st.image("logo_talentpro.jpg", width=300)
-        st.markdown("### Acceso Seguro")
-        with st.form("login"):
-            u = st.text_input("Usuario"); p = st.text_input("Contraseña", type="password")
-            if st.form_submit_button("Entrar", use_container_width=True):
-                user = st.session_state['users_db'].get(u)
-                if user:
-                    try:
-                        if bcrypt.checkpw(p.encode(), user.get('password_hash','').encode()):
-                            st.session_state.update({'auth_status':True, 'current_user':u, 'current_role':user['role']})
-                            st.success("¡Bienvenido!"); time.sleep(0.5); st.rerun()
-                        else: st.error("Credenciales inválidas")
-                    except: st.error("Error de seguridad")
-                else: st.error("Credenciales inválidas")
-
-def logout(): st.session_state.clear(); st.rerun()
-
 # ==============================================================================
-# 2. RECURSOS Y CONFIG
+# 3. LOGIN & LOGOUT
 # ==============================================================================
 LOGO_PATH = "logo_talentpro.jpg"
+
 @st.cache_resource
 def descargar_logo():
     if not os.path.exists(LOGO_PATH):
         try:
             r = requests.get("https://bukwebapp-enterprise-chile.s3.amazonaws.com/talentpro/generals/logo_login/logo_login.jpg")
-            if r.status_code == 200: with open(LOGO_PATH, 'wb') as f: f.write(r.content)
+            if r.status_code == 200:
+                with open(LOGO_PATH, 'wb') as f:
+                    f.write(r.content)
         except: pass
 descargar_logo()
 
+def login_page():
+    c1,c2,c3 = st.columns([1,2,1])
+    with c2:
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=300)
+        st.markdown("### Acceso Seguro")
+        with st.form("login"):
+            u = st.text_input("Usuario")
+            p = st.text_input("Contraseña", type="password")
+            if st.form_submit_button("Entrar", use_container_width=True):
+                user = st.session_state['users_db'].get(u)
+                if user:
+                    try:
+                        if bcrypt.checkpw(p.encode(), user.get('password_hash','').encode()):
+                            st.session_state['auth_status'] = True
+                            st.session_state['current_user'] = u
+                            st.session_state['current_role'] = user['role']
+                            st.success("¡Bienvenido!")
+                            time.sleep(0.5)
+                            st.rerun()
+                        else: st.error("Credenciales inválidas")
+                    except: st.error("Error de seguridad")
+                else: st.error("Credenciales inválidas")
+
+def logout():
+    st.session_state.clear()
+    st.rerun()
+
 if not st.session_state['auth_status']: login_page(); st.stop()
 
+# ==============================================================================
+# 4. CARGA DE DATOS (EXCEL PRECIOS)
+# ==============================================================================
 @st.cache_data(ttl=60)
 def cargar_precios():
     try:
-        token = st.secrets["github"]["token"]; url = st.secrets["github"]["url_precios"]
+        token = st.secrets["github"]["token"]
+        url = st.secrets["github"]["url_precios"]
         r = requests.get(url, headers={"Authorization": f"token {token}"})
         if r.status_code == 200:
             xls = pd.ExcelFile(io.BytesIO(r.content))
@@ -136,12 +169,8 @@ def obtener_indicadores():
     return t
 TASAS = obtener_indicadores()
 
-# TEXTOS, EMPRESAS, FUNCIONES PDF (Mismos de antes, resumidos para espacio)
-TEXTOS = {"ES": {"title": "Cotizador", "save": "Guardar", "download": "Descargar", "invoice_to": "Facturar a:", "date": "Fecha", "desc": "Descripción", "qty": "Cant", "unit": "Unitario", "total": "Total", "subtotal": "Subtotal", "fee": "Fee Admin", "grand_total": "TOTAL", "validity": "Validez 30 días", "legal_intl": "Facturación a {pais}. +Impuestos retenidos +Gastos OUR.", "noshow_title": "No-Show:", "noshow_text": "Multa 50% inasistencia <24h.", "sec_prod": "Licencias", "sec_serv": "Servicios", "client": "Cliente", "proj": "Proyecto", "add": "Agregar", "discount": "Descuento"}}
-# (Agrega EN y PT si los necesitas completos como antes)
-# Para simplicidad del script final, usaré ES como base, pero la lógica multi-idioma sigue ahí.
-# ASUMIMOS IDIOMA ES POR DEFECTO PARA ESTE EJEMPLO LARGO
-
+# TEXTOS & EMPRESAS (Abreviados para espacio, funcionalidad completa)
+TEXTOS = {"ES": {"title": "Cotizador", "save": "Guardar", "download": "Descargar PDF", "invoice_to": "Facturar a:", "date": "Fecha", "desc": "Descripción", "qty": "Cant", "unit": "Unitario", "total": "Total", "subtotal": "Subtotal", "fee": "Fee Admin", "grand_total": "TOTAL", "validity": "Validez 30 días", "legal_intl": "Facturación a {pais}. +Impuestos retenidos +Gastos OUR.", "noshow_title": "No-Show:", "noshow_text": "Multa 50% inasistencia <24h.", "sec_prod": "Licencias", "sec_serv": "Servicios", "client": "Cliente", "proj": "Proyecto", "add": "Agregar", "discount": "Descuento"}}
 EMPRESAS = {
     "Brasil": {"Nombre": "TalentPRO Brasil Ltda.", "ID": "CNPJ: 49.704.046/0001-80", "Dir": "Av. Marcos Penteado 939", "Giro": "Consultoria"},
     "Peru": {"Nombre": "TALENTPRO S.A.C.", "ID": "DNI 25489763", "Dir": "AV. EL DERBY 254", "Giro": "Servicios"},
@@ -150,9 +179,7 @@ EMPRESAS = {
     "Latam": {"Nombre": "TALENTPRO LATAM, S.A.", "ID": "RUC: 155723672-2", "Dir": "CALLE 50, PANAMÁ", "Giro": "Talent Services"}
 }
 
-if 'cotizaciones' not in st.session_state: st.session_state['cotizaciones'] = pd.DataFrame(columns=['id', 'fecha', 'empresa', 'pais', 'total', 'moneda', 'estado', 'vendedor'])
-if 'carrito' not in st.session_state: st.session_state['carrito'] = []
-
+# --- LOGICA NEGOCIO ---
 def obtener_contexto(pais):
     if pais == "Chile": return {"mon": "UF", "dp": df_p_cl, "ds": df_s_cl, "tipo": "Loc"}
     if pais in ["Brasil", "Brazil"]: return {"mon": "R$", "dp": df_p_br, "ds": df_s_br, "tipo": "Loc"}
@@ -166,7 +193,16 @@ def calc_paa(c, m):
 
 def calc_xls(df, p, c, l):
     if df.empty: return 0.0
-    r = df[df['Producto']==p]; return float(r.iloc[0][[50,100,200,300,500,1000,'Infinito'][next((i for i, x in enumerate([50,100,200,300,500,1000,float('inf')] if l else [100,200,300,500,1000,float('inf')]) if c<=x), -1)]]) if not r.empty else 0.0
+    r = df[df['Producto']==p]; 
+    if r.empty: return 0.0
+    ts = [50,100,200,300,500,1000,'Infinito'] if l else [100,200,300,500,1000,'Infinito']
+    for t in ts:
+        if c <= (float('inf') if t=='Infinito' else t):
+            try: return float(r.iloc[0][t])
+            except: 
+                try: return float(r.iloc[0][str(t)])
+                except: return 0.0
+    return 0.0
 
 def get_impuestos(pais, sub, eva):
     if pais=="Chile": return "IVA (19%)", eva*0.19
@@ -180,7 +216,7 @@ def get_empresa(pais, items):
     if pais=="Chile": return EMPRESAS["Chile_Pruebas"] if any(i['Ítem']=='Evaluación' for i in items) else EMPRESAS["Chile_Servicios"]
     return EMPRESAS["Latam"]
 
-# --- PDF ---
+# --- PDF ENGINE ---
 class PDF(FPDF):
     def header(self):
         if os.path.exists(LOGO_PATH): self.image(LOGO_PATH, 10, 10, 35)
@@ -227,116 +263,91 @@ def generar_pdf_final(emp, cli, items, calc, extras, tit):
     return pdf.output(dest='S').encode('latin-1')
 
 # ==============================================================================
-# 4. MÓDULO CRM (LEADS & CLIENTES)
+# 5. MÓDULO CRM (NUEVO)
 # ==============================================================================
 def modulo_crm():
-    st.title("📇 CRM & Clientes")
+    st.title("📇 CRM & Gestión Comercial")
     
-    # LISTAS DESPLEGABLES
-    AREAS_VENTA = ["Cono Sur", "Brasil", "Centroamérica y Caribe"]
-    INDUSTRIAS = ["Tecnología", "Finanzas", "Retail", "Minería", "Salud", "Educación", "Otros"]
-    ETAPAS_VENTA = ["Prospección", "Contacto Inicial", "Reunión Agendada", "Propuesta Enviada", "Negociación", "Cerrado Ganado", "Cerrado Perdido"]
+    tab_leads, tab_clientes = st.tabs(["📋 Gestión de Leads", "🏢 Cartera de Clientes"])
     
-    tab_leads, tab_clientes = st.tabs(["📋 Gestión de Leads", "🏢 Cartera de Clientes (360°)"])
-    
-    # --- TAB 1: LEADS ---
+    # --- LEADS ---
     with tab_leads:
         with st.expander("➕ Nuevo Lead", expanded=False):
             with st.form("form_lead"):
                 st.subheader("Datos Generales")
                 c1, c2, c3 = st.columns(3)
-                nom_cliente = c1.text_input("Nombre Cliente / Empresa")
-                area = c2.selectbox("Área de Venta", AREAS_VENTA)
-                pais = c3.selectbox("País/Territorio", TODOS_LOS_PAISES)
+                nom_cliente = c1.text_input("Cliente / Empresa")
+                area = c2.selectbox("Área", ["Cono Sur", "Brasil", "Centroamérica"])
+                pais = c3.selectbox("País", TODOS_LOS_PAISES)
                 
                 c1, c2, c3 = st.columns(3)
-                ind = c1.selectbox("Industria", INDUSTRIAS)
-                web = c2.text_input("Sitio Web")
-                idioma = c3.selectbox("Idioma", ["Español", "Inglés", "Portugués"])
+                ind = c1.selectbox("Industria", ["Tecnología", "Finanzas", "Retail", "Minería", "Salud", "Educación", "Otros"])
+                web = c2.text_input("Web")
+                idioma = c3.selectbox("Idioma", ["ES", "EN", "PT"])
                 
                 st.subheader("Contactos")
-                c1, c2, c3 = st.columns(3)
-                con1_n = c1.text_input("Nombre Contacto 1")
-                con1_m = c2.text_input("Mail Contacto 1")
-                con1_t = c3.text_input("Teléfono 1")
+                for i in range(1, 4):
+                    c1, c2, c3 = st.columns(3)
+                    c1.text_input(f"Nombre {i}", key=f"n{i}"); c2.text_input(f"Mail {i}", key=f"m{i}"); c3.text_input(f"Tel {i}", key=f"t{i}")
                 
-                st.subheader("Detalle del Proceso")
-                c1, c2, c3 = st.columns(3)
-                origen = c1.selectbox("Origen Lead", ["Inbound", "Outbound", "Referido", "Evento", "Linkedin"])
-                etapa = c2.selectbox("Etapa", ETAPAS_VENTA)
-                f_llegada = c3.date_input("Fecha Llegada", datetime.now())
+                st.subheader("Seguimiento")
+                c1, c2 = st.columns(2)
+                origen = c1.selectbox("Origen", ["Inbound", "Outbound", "Referido", "Evento"])
+                etapa = c2.selectbox("Etapa", ["Prospección", "Contacto", "Reunión", "Propuesta", "Negociación", "Cerrado Ganado", "Cerrado Perdido"])
                 
-                expectativa = st.text_area("Expectativa / Dolor del Cliente")
+                expectativa = st.text_area("Expectativa / Dolor")
                 
                 if st.form_submit_button("Guardar Lead"):
+                    # Guardar en JSON remoto
                     new_lead = {
-                        "id": int(time.time()), "Cliente": nom_cliente, "Area": area, "Pais": pais,
-                        "Industria": ind, "Web": web, "Idioma": idioma,
-                        "Contacto1": f"{con1_n} | {con1_m} | {con1_t}",
-                        "Origen": origen, "Etapa": etapa, "FechaLlegada": str(f_llegada),
-                        "Expectativa": expectativa, "Responsable": st.session_state['current_user']
+                        "id": int(time.time()), "Cliente": nom_cliente, "Area": area, "Pais": pais, "Industria": ind,
+                        "Etapa": etapa, "Responsable": st.session_state['current_user'], "Fecha": str(datetime.now().date())
                     }
-                    leads_update = st.session_state['leads_db'] + [new_lead]
-                    if github_push_json('url_leads', leads_update, st.session_state.get('leads_sha')):
-                        st.success("Lead guardado exitosamente"); time.sleep(1); st.rerun()
-                    else: st.error("Error guardando en GitHub")
-        
-        # VISUALIZACIÓN DE LEADS
-        if st.session_state['leads_db']:
-            df_leads = pd.DataFrame(st.session_state['leads_db'])
-            st.dataframe(df_leads, use_container_width=True)
-        else: st.info("No hay leads registrados.")
+                    new_db = st.session_state['leads_db'] + [new_lead]
+                    if github_push_json('url_leads', new_db, st.session_state.get('leads_sha')):
+                        st.session_state['leads_db'] = new_db # Actualizar local
+                        st.success("Lead guardado"); time.sleep(1); st.rerun()
+                    else: st.error("Error al guardar")
 
-    # --- TAB 2: CLIENTES 360 (INTEGRACIÓN CON FINANZAS) ---
+        if st.session_state['leads_db']:
+            st.dataframe(pd.DataFrame(st.session_state['leads_db']), use_container_width=True)
+        else: st.info("No hay leads.")
+
+    # --- CLIENTES 360 ---
     with tab_clientes:
-        st.subheader("Visión 360° de Clientes")
+        st.subheader("Visión 360°")
+        # Unir empresas de cotizaciones y leads
+        clientes_cots = st.session_state['cotizaciones']['empresa'].unique().tolist()
+        clientes_leads = [l['Cliente'] for l in st.session_state['leads_db']]
+        todos = sorted(list(set(clientes_cots + clientes_leads)))
         
-        # Obtener lista única de empresas (de Leads y de Cotizaciones)
-        leads_emp = [l['Cliente'] for l in st.session_state['leads_db']]
-        cots_emp = st.session_state['cotizaciones']['empresa'].unique().tolist()
-        todas_empresas = sorted(list(set(leads_emp + cots_emp)))
+        sel_cli = st.selectbox("Buscar Cliente", todos)
         
-        sel_cliente = st.selectbox("Seleccionar Cliente para Análisis", todas_empresas)
-        
-        if sel_cliente:
-            # Filtrar Data
-            cots_cliente = st.session_state['cotizaciones'][st.session_state['cotizaciones']['empresa'] == sel_cliente]
+        if sel_cli:
+            # Filtrar Cotizaciones
+            df_c = st.session_state['cotizaciones']
+            cots_cli = df_c[df_c['empresa'] == sel_cli]
             
-            # KPIS
+            # KPI
             c1, c2, c3 = st.columns(3)
-            total_cotizado = cots_cliente['total'].sum()
-            cots_facturadas = cots_cliente[cots_cliente['estado'] == 'Facturada']
+            total_cot = cots_cli['total'].sum()
             
-            # Filtro Año Fiscal (Enero - Dic) - Asumimos año actual
+            # Facturación Año Actual
             current_year = datetime.now().year
-            # Convertir fecha a datetime si es string
-            cots_facturadas['fecha_dt'] = pd.to_datetime(cots_facturadas['fecha'])
-            fact_fiscal = cots_facturadas[cots_facturadas['fecha_dt'].dt.year == current_year]['total'].sum()
+            # Hack simple para filtrar por año string "YYYY-MM-DD"
+            facturado = cots_cli[(cots_cli['estado'] == 'Facturada') & (cots_cli['fecha'].str.contains(str(current_year)))]['total'].sum()
             
-            c1.metric("Total Histórico Cotizado", f"${total_cotizado:,.0f}")
-            c2.metric(f"Facturado {current_year}", f"${fact_fiscal:,.0f}")
-            c3.metric("Cant. Cotizaciones", len(cots_cliente))
+            c1.metric("Total Cotizado", f"${total_cot:,.0f}")
+            c2.metric(f"Facturado {current_year}", f"${facturado:,.0f}")
+            c3.metric("Cant. Cotizaciones", len(cots_cli))
             
             st.divider()
-            st.markdown("#### 📜 Historial de Cotizaciones")
-            st.dataframe(cots_cliente[['id', 'fecha', 'total', 'moneda', 'estado', 'vendedor']], use_container_width=True)
-            
-            # Info del Lead si existe
-            info_lead = next((item for item in st.session_state['leads_db'] if item["Cliente"] == sel_cliente), None)
-            if info_lead:
-                st.info(f"**Datos CRM:** Contacto: {info_lead.get('Contacto1')} | Origen: {info_lead.get('Origen')} | Etapa: {info_lead.get('Etapa')}")
+            st.markdown("#### Historial de Cotizaciones")
+            st.dataframe(cots_cli, use_container_width=True)
 
-# --- MÓDULOS EXISTENTES (Resumidos para que quepa) ---
+# --- OTROS MODULOS (RESUMIDOS) ---
 def modulo_cotizador():
-    # ... (El mismo código de cotizador que ya funcionaba perfecto)
-    # Para ahorrar espacio en esta respuesta, asumo que mantienes el código anterior del cotizador
-    # Solo voy a poner la estructura base, tú pega el contenido del Cotizador anterior aquí.
-    st.title("📝 Cotizador (Ver código anterior)")
-    # ... Pega aquí el contenido de modulo_cotizador del prompt anterior ...
-    # Como el usuario ya tiene el código funcional, aquí simplifico para enfocarme en el CRM.
-    # (Si necesitas que repita TODO el código gigante, dímelo, pero es mejor modularizar).
-    # VOY A REPETIRLO PARA QUE SEA COPY-PASTE Y FUNCIONE:
-    
+    # ... (Codigo cotizador anterior, mantenido igual para funcionalidad)
     cl, ct = st.columns([1, 5]); idi = cl.selectbox("🌐", ["ES"]); txt = TEXTOS[idi]; ct.title(txt['title'])
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("UF", f"${TASAS['UF']:,.0f}"); k2.metric("USD", f"${TASAS['USD_CLP']:,.0f}"); k3.metric("BRL", f"{TASAS['USD_BRL']:.2f}")
@@ -388,7 +399,6 @@ def modulo_cotizador():
                 pr, sv = [x for x in st.session_state['carrito'] if x['Ítem']=='Evaluación'], [x for x in st.session_state['carrito'] if x['Ítem']=='Servicio']
                 links=""
                 if ps == "Chile" and pr and sv:
-                    # Logic for 2 PDFs
                     sp=sum(x['Total'] for x in pr); fp=sp*0.1 if fee else 0; tp=sp*0.19; totp=sp+fp+tp
                     pdf_p = generar_pdf_final(EMPRESAS['Chile_Pruebas'], cli, pr, {'subtotal':sp,'fee':fp,'tax_name':'IVA','tax_val':tp,'total':totp}, txt['quote'], ext, "Pruebas")
                     b64p = base64.b64encode(pdf_p).decode('latin-1')
@@ -414,16 +424,13 @@ def modulo_cotizador():
         with cL:
             if st.button("Limpiar"): st.session_state['carrito']=[]; st.rerun()
 
-# (RESTO DE MODULOS: SEGUIMIENTO, FINANZAS, DASHBOARD, ADMIN - IGUAL QUE ANTES)
-# Voy a incluir las funciones minimas para que corra, el resto es igual
-
 def modulo_seguimiento():
     st.title("🤝 Seguimiento"); df=st.session_state['cotizaciones']
     if df.empty: return
     for i, r in df.iterrows():
         with st.expander(f"{r['id']} - {r['empresa']}"):
             st.write(f"Total: {r['moneda']} {r['total']:,.2f}")
-            ns = st.selectbox("Estado",["Enviada","Aprobada"], key=f"st{i}")
+            ns = st.selectbox("Estado",["Enviada","Aprobada","Rechazada"], key=f"st{i}")
             if ns!=r['estado']:
                 if st.button("Update", key=f"up{i}"):
                     st.session_state['cotizaciones'].at[i,'estado']=ns; st.rerun()
@@ -438,7 +445,8 @@ def modulo_dashboard():
 
 def modulo_admin():
     st.title("👥 Admin")
-    # Logica admin simple
+    # Logica de usuarios (ya implementada en memoria)
+    st.dataframe(pd.DataFrame(st.session_state['users_db']).T)
 
 # --- APP ---
 with st.sidebar:

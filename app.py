@@ -73,12 +73,16 @@ if not st.session_state['auth_status']: login_page(); st.stop()
 # 2. CARGA DE DATOS SEGURA (DESDE REPO PRIVADO)
 # ==============================================================================
 LOGO_PATH = "logo_talentpro.jpg"
+
 @st.cache_resource
 def descargar_logo():
     if not os.path.exists(LOGO_PATH):
         try:
             r = requests.get("https://bukwebapp-enterprise-chile.s3.amazonaws.com/talentpro/generals/logo_login/logo_login.jpg")
-            if r.status_code == 200: with open(LOGO_PATH, 'wb') as f: f.write(r.content)
+            # CORRECCIÓN AQUÍ: Separado en líneas distintas
+            if r.status_code == 200:
+                with open(LOGO_PATH, 'wb') as f:
+                    f.write(r.content)
         except: pass
 descargar_logo()
 
@@ -124,6 +128,9 @@ def cargar_datos_seguros():
 
 # Cargar Datos
 data = cargar_datos_seguros()
+if data is None:
+    st.stop()
+
 df_p_usd, df_s_usd, df_config, df_p_cl, df_s_cl, df_p_br, df_s_br = data
 TODOS_LOS_PAISES = sorted(df_config['Pais'].unique().tolist()) if not df_config.empty else ["Chile", "Brasil"]
 
@@ -157,7 +164,7 @@ if 'cotizaciones' not in st.session_state:
     st.session_state['cotizaciones'] = pd.DataFrame(columns=['id', 'fecha', 'empresa', 'pais', 'total', 'moneda', 'estado', 'vendedor'])
 if 'carrito' not in st.session_state: st.session_state['carrito'] = []
 
-# --- LOGICA NEGOCIO ---
+# --- FUNCIONES CORE ---
 def obtener_contexto(pais):
     if pais == "Chile": return {"mon": "UF", "dp": df_p_cl, "ds": df_s_cl, "tipo": "Loc"}
     if pais in ["Brasil", "Brazil"]: return {"mon": "R$", "dp": df_p_br, "ds": df_s_br, "tipo": "Loc"}
@@ -312,6 +319,7 @@ def modulo_cotizador():
                 
                 b64=base64.b64encode(pdf_b).decode('latin-1')
                 st.markdown(f'<a href="data:application/pdf;base64,{b64}" download="Cot_{nid}.pdf" class="stButton">{txt["download"]}</a>',unsafe_allow_html=True)
+                
                 st.session_state['cotizaciones']=pd.concat([st.session_state['cotizaciones'], pd.DataFrame([{
                     'id':nid, 'fecha':datetime.now().strftime("%Y-%m-%d"), 'empresa':emp, 'pais':ps,
                     'total':fin, 'moneda':mon, 'estado':'Enviada', 'vendedor':ven, 'idioma':idi
@@ -347,7 +355,7 @@ def modulo_finanzas():
     st.write("Histórico:"); st.dataframe(df[df['estado']=='Facturada'])
 
 def modulo_dashboard():
-    st.title("📊 Dashboard"); df=st.session_state['cotizaciones']
+    st.title("📊 Dashboards"); df=st.session_state['cotizaciones']
     if df.empty: return
     c1,c2=st.columns(2)
     res=df['estado'].value_counts().reset_index(); res.columns=['Estado','Cant']

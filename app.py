@@ -33,7 +33,7 @@ def cargar_usuarios_github():
             return json.loads(content), r.json()['sha']
         else:
             hashed = bcrypt.hashpw("Max1234".encode(), bcrypt.gensalt()).decode()
-            return {"ehafemann@talentpro-latam.com": {"name": "Emilio H.", "role": "Super Admin", "password_hash": hashed}}, None
+            return {"ehafemann@talentpro-latam.com": {"name": "Emilio Hafemann", "role": "Super Admin", "password_hash": hashed}}, None
     except: return {}, None
 
 def guardar_usuarios_github(users_dict, sha):
@@ -51,7 +51,7 @@ if 'users_db' not in st.session_state:
     admin_email = "ehafemann@talentpro-latam.com"
     if admin_email not in users:
         hashed = bcrypt.hashpw("Max1234".encode(), bcrypt.gensalt()).decode()
-        users[admin_email] = {"name": "Emilio H.", "role": "Super Admin", "password_hash": hashed}
+        users[admin_email] = {"name": "Emilio Hafemann", "role": "Super Admin", "password_hash": hashed}
     st.session_state['users_db'] = users
     st.session_state['users_sha'] = sha
 
@@ -216,11 +216,11 @@ def get_empresa(pais, items):
     if pais=="Chile": return EMPRESAS["Chile_Pruebas"] if any(i['Ítem']=='Evaluación' for i in items) else EMPRESAS["Chile_Servicios"]
     return EMPRESAS["Latam"]
 
-# --- PDF CLASS (STATE AWARE FOR MULTI-PAGE) ---
+# --- PDF CLASS ---
 class PDF(FPDF):
     def __init__(self, orientation='P', unit='mm', format='A4'):
         super().__init__(orientation, unit, format)
-        self.current_empresa = None # To store current page context
+        self.current_empresa = None 
         self.title_text = "COTIZACIÓN"
 
     def set_context(self, empresa, titulo):
@@ -238,12 +238,11 @@ class PDF(FPDF):
         self.cell(0, 10, 'TalentPro Digital Services', 0, 0, 'C')
 
 def agregar_pagina_al_pdf(pdf, empresa, cliente, items, calc, lang, extras, titulo):
-    # Set context BEFORE adding page so header works
     pdf.set_context(empresa, titulo)
     pdf.add_page()
     t = TEXTOS[lang]
     
-    # HEADER INFO
+    # HEADER
     pdf.set_font("Arial", 'B', 10); pdf.set_text_color(0, 51, 102); pdf.cell(95, 5, empresa['Nombre'], 0, 0)
     pdf.set_text_color(100); pdf.cell(95, 5, t['invoice_to'], 0, 1)
     pdf.set_font("Arial", '', 9); pdf.set_text_color(50); y = pdf.get_y()
@@ -279,9 +278,8 @@ def agregar_pagina_al_pdf(pdf, empresa, cliente, items, calc, lang, extras, titu
     if extras.get('desc', 0) > 0: r(t['discount'], -extras['desc'])
     pdf.ln(1); r(t['grand_total'], calc['total'], True); pdf.ln(10)
     
-    # LEGAL & NO SHOW (RESTAURADO COMPLETO)
+    # LEGAL
     pdf.set_font("Arial", 'I', 8); pdf.set_text_color(80)
-    
     if empresa['Nombre'] == EMPRESAS['Latam']['Nombre']:
         pdf.multi_cell(0, 4, t['legal_intl'].format(pais=extras['pais']), 0, 'L'); pdf.ln(3)
     
@@ -289,7 +287,6 @@ def agregar_pagina_al_pdf(pdf, empresa, cliente, items, calc, lang, extras, titu
     if any(any(tr in i['Desc'].lower() for tr in trigs) for i in items):
         pdf.set_font("Arial", 'B', 8); pdf.cell(0, 4, t['noshow_title'], 0, 1)
         pdf.set_font("Arial", '', 8); pdf.multi_cell(0, 4, t['noshow_text'], 0, 'L'); pdf.ln(3)
-        
     pdf.set_text_color(100); pdf.cell(0, 5, t['validity'], 0, 1)
 
 # ==============================================================================
@@ -306,8 +303,14 @@ def modulo_cotizador():
     c2.info(f"Moneda: **{ctx['mon']}** | Tarifas: **{ctx['tipo']}** {ctx.get('niv', '')}")
     
     st.markdown("---"); cc1,cc2,cc3,cc4=st.columns(4)
-    emp = cc1.text_input(txt['client']); con = cc2.text_input("Contacto"); ema = cc3.text_input("Email"); ven = cc4.selectbox("Ejecutivo", ["Comercial 1", "Comercial 2"])
-    proj = st.text_input(txt['proj']) # CAMPO PROYECTO
+    emp = cc1.text_input(txt['client']); con = cc2.text_input("Contacto"); ema = cc3.text_input("Email")
+    
+    # EJECUTIVO AUTOMÁTICO
+    current_u = st.session_state['current_user']
+    user_real_name = st.session_state['users_db'][current_u].get('name', current_u)
+    ven = cc4.text_input("Ejecutivo", value=user_real_name, disabled=True)
+    
+    proj = st.text_input(txt['proj'])
     
     st.markdown("---"); tp, ts = st.tabs([txt['sec_prod'], txt['sec_serv']])
     with tp:
@@ -343,17 +346,16 @@ def modulo_cotizador():
                 nid=f"TP-{random.randint(1000,9999)}"; cli={'empresa':emp,'contacto':con,'email':ema}
                 ext={'fee':fee,'bank':bnk,'desc':dsc,'pais':ps,'id':nid}
                 
-                pdf = PDF() # INSTANCIA ÚNICA
+                pdf = PDF() # Instancia Única
                 pr, sv = [x for x in st.session_state['carrito'] if x['Ítem']=='Evaluación'], [x for x in st.session_state['carrito'] if x['Ítem']=='Servicio']
                 
-                # LÓGICA PÁGINAS
                 if ps == "Chile" and pr and sv:
-                    # PAG 1 (PRUEBAS)
+                    # PAG 1 (SPA)
                     sub_p = sum(x['Total'] for x in pr); fee_p = sub_p * 0.10 if fee else 0; tax_p = sub_p * 0.19; tot_p = sub_p + fee_p + tax_p
                     calc_p = {'subtotal':sub_p, 'fee':fee_p, 'tax_name':'IVA (19%)', 'tax_val':tax_p, 'total':tot_p}
                     agregar_pagina_al_pdf(pdf, EMPRESAS['Chile_Pruebas'], cli, pr, calc_p, idi, {'id':f"{nid}-P", 'pais':ps}, f"{txt['quote']} - Pruebas")
                     
-                    # PAG 2 (SERVICIOS)
+                    # PAG 2 (LTDA)
                     sub_s = sum(x['Total'] for x in sv); tot_s = sub_s + bnk - dsc
                     calc_s = {'subtotal':sub_s, 'fee':0, 'tax_name':'', 'tax_val':0, 'bank':bnk, 'desc':dsc, 'total':tot_s}
                     agregar_pagina_al_pdf(pdf, EMPRESAS['Chile_Servicios'], cli, sv, calc_s, idi, {'id':f"{nid}-S", 'pais':ps}, f"{txt['quote']} - Servicios")
@@ -362,7 +364,6 @@ def modulo_cotizador():
                     calc = {'subtotal':sub, 'fee':vfee, 'tax_name':tn, 'tax_val':tv, 'bank':bnk, 'desc':dsc, 'total':fin}
                     agregar_pagina_al_pdf(pdf, ent, cli, st.session_state['carrito'], calc, idi, ext, txt['quote'])
 
-                # FILENAME
                 b64 = base64.b64encode(pdf.output(dest='S').encode('latin-1')).decode('latin-1')
                 clean_date = datetime.now().strftime("%d-%m-%y")
                 clean_proj = proj.replace(" ", "_") if proj else "Proyecto"
@@ -420,10 +421,11 @@ def modulo_admin():
     st.title("👥 Usuarios"); st.write(f"Admin: {st.session_state['current_user']}")
     with st.form("new_user"):
         st.write("Crear Nuevo Usuario"); nu=st.text_input("Email"); np=st.text_input("Pass",type="password"); nr=st.selectbox("Rol",["Comercial","Finanzas","Super Admin"])
+        name = st.text_input("Nombre Completo")
         if st.form_submit_button("Crear"):
             hashed = bcrypt.hashpw(np.encode(), bcrypt.gensalt()).decode()
             new_users = st.session_state['users_db'].copy()
-            new_users[nu] = {'pass': np, 'role': nr, 'name': nu, 'password_hash': hashed}
+            new_users[nu] = {'pass': np, 'role': nr, 'name': name, 'password_hash': hashed}
             if guardar_usuarios_github(new_users, st.session_state['users_sha']):
                 st.success(f"Creado: {nu}"); time.sleep(1); st.rerun()
             else: st.error("Error al guardar en GitHub")

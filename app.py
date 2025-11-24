@@ -34,15 +34,14 @@ def obtener_indicadores():
 
 TASAS_DIA = obtener_indicadores()
 
-# --- 2. CARGAR EXCEL (CON TUS NOMBRES EXACTOS) ---
+# --- 2. CARGAR EXCEL ---
 @st.cache_data(ttl=60)
 def cargar_datos():
     try:
         xls = pd.ExcelFile('precios.xlsx')
         
-        # AQUI ESTA EL CAMBIO DE NOMBRES DE PESTAÑAS
-        df_p_usd = pd.read_excel(xls, 'Pruebas Int')     # Antes 'Pruebas'
-        df_s_usd = pd.read_excel(xls, 'Servicios Int')   # Antes 'Servicios'
+        df_p_usd = pd.read_excel(xls, 'Pruebas Int')
+        df_s_usd = pd.read_excel(xls, 'Servicios Int')
         df_config = pd.read_excel(xls, 'Config')
         
         try: df_p_cl = pd.read_excel(xls, 'Pruebas_CL')
@@ -107,21 +106,17 @@ def calcular_prueba_excel(df, producto, cantidad, es_local):
     fila = df[df['Producto'] == producto]
     if fila.empty: return 0.0
     
-    # AQUÍ ESTÁ EL CAMBIO DE LOS 50
     if es_local:
-        # Chile y Brasil parten en 50
         tramos = [50, 100, 200, 300, 500, 1000, 'Infinito']
     else:
-        # Internacional parte en 100
         tramos = [100, 200, 300, 500, 1000, 'Infinito']
     
     for tramo in tramos:
         limite = float('inf') if tramo == 'Infinito' else tramo
         if cantidad <= limite:
-            # Busca la columna (convierte a string o int para coincidir con excel)
             try: return float(fila.iloc[0][tramo])
             except: 
-                try: return float(fila.iloc[0][str(tramo)]) # Intenta como texto
+                try: return float(fila.iloc[0][str(tramo)])
                 except: return 0.0
     return 0.0
 
@@ -178,7 +173,7 @@ def cotizador():
     st.markdown("---")
     st.subheader("2. Selección")
     
-    tab_p, tab_s = st.tabs(["🧩 Pruebas", "💼 Servicios"])
+    tab_p, tab_s = st.tabs(["🧩 Pruebas & PAA", "💼 Servicios (Consultoría)"])
 
     # --- PESTAÑA PRUEBAS ---
     with tab_p:
@@ -191,10 +186,13 @@ def cotizador():
             sel_p = cp1.selectbox("Producto", lista_completa)
             cant_p = cp2.number_input("Cantidad", 1, 10000, 10)
             
-           # CALCULO
+            # CALCULO
             nota = ""
+            tipo_item_interno = "Evaluación" # Por defecto paga fee
+            
             if sel_p == "Certificación PAA (Transversal)":
                 unit_p, nota = calcular_paa(cant_p, moneda)
+                tipo_item_interno = "Servicio" # PAA NO PAGA FEE (Regla solicitada)
             else:
                 es_local = (ctx['tipo'] == 'Local')
                 unit_p = calcular_prueba_excel(ctx['df_pruebas'], sel_p, cant_p, es_local)
@@ -205,8 +203,12 @@ def cotizador():
             
             if cp4.button("Agregar", key="add_p"):
                 st.session_state['carrito'].append({
-                    "Ítem": "Evaluación", "Desc": sel_p, "Det": f"x{cant_p}",
-                    "Moneda": moneda, "Unit": unit_p, "Total": unit_p * cant_p
+                    "Ítem": tipo_item_interno, # Aquí se define si paga fee o no
+                    "Desc": sel_p, 
+                    "Det": f"x{cant_p}",
+                    "Moneda": moneda, 
+                    "Unit": unit_p, 
+                    "Total": unit_p * cant_p
                 })
                 st.rerun()
 
@@ -217,17 +219,22 @@ def cotizador():
         
         if lista_servicios:
             sel_s = cs1.selectbox("Servicio", lista_servicios)
-            c_rol, c_hora = cs2.columns(2)
+            c_rol, c_cant = cs2.columns(2)
             rol = c_rol.selectbox("Rol", ROLES)
-            horas = c_hora.number_input("Horas", 1, 1000, 1)
+            # CAMBIO: AHORA DICE "CANTIDAD" EN LUGAR DE "HORAS"
+            cantidad_s = c_cant.number_input("Cantidad", 1, 1000, 1)
             
             unit_s = calcular_servicio(ctx['df_servicios'], sel_s, rol, ctx)
             
             cs3.metric(f"Tarifa ({moneda})", f"{unit_s:,.2f}")
             if cs4.button("Agregar", key="add_s"):
                 st.session_state['carrito'].append({
-                    "Ítem": "Servicio", "Desc": sel_s, "Det": f"{rol} ({horas}h)",
-                    "Moneda": moneda, "Unit": unit_s, "Total": unit_s * horas
+                    "Ítem": "Servicio", 
+                    "Desc": sel_s, 
+                    "Det": f"{rol} ({cantidad_s})",
+                    "Moneda": moneda, 
+                    "Unit": unit_s, 
+                    "Total": unit_s * cantidad_s
                 })
                 st.rerun()
 
@@ -244,6 +251,9 @@ def cotizador():
             st.dataframe(df_c, use_container_width=True, hide_index=True)
             
             subtotal = df_c['Total'].sum()
+            
+            # FILTRO CRUCIAL: EL FEE SOLO SE APLICA SI EL ÍTEM ES "Evaluación"
+            # Como PAA ahora se guarda como "Servicio", queda excluida.
             tot_eval = df_c[df_c['Ítem'] == 'Evaluación']['Total'].sum()
             
             c_f1, c_f2 = st.columns([3, 1])

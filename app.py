@@ -60,7 +60,7 @@ def login_page():
             if submit:
                 # Lógica de validación con indentación correcta
                 if username in st.session_state['users_db']:
-                    if st.session_state['users_db'][username]['password']
+                    if st.session_state['users_db'][username]['pass']
                         st.session_state['auth_status'] = True
                         st.session_state['current_user'] = username
                         st.session_state['current_role'] = st.session_state['users_db'][username]['role']

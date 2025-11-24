@@ -267,4 +267,147 @@ def cotizador():
     col_lang, col_tit = st.columns([1, 5])
     idioma = col_lang.selectbox("🌐", ["ES", "EN", "PT"])
     txt = TEXTOS[idioma]
-    col_tit.title(txt['title'
+    col_tit.title(txt['title'])
+
+    c1, c2 = st.columns([1, 2])
+    idx_cl = TODOS_LOS_PAISES.index("Chile") if "Chile" in TODOS_LOS_PAISES else 0
+    pais_sel = c1.selectbox("🌎 País", TODOS_LOS_PAISES, index=idx_cl)
+    ctx = obtener_contexto(pais_sel)
+    c2.info(f"Mon: **{ctx['mon']}** | Tipo: **{ctx['tipo']}** {ctx.get('niv','')}")
+
+    st.markdown("---")
+    cc1, cc2, cc3, cc4 = st.columns(4)
+    empresa = cc1.text_input(txt['client'])
+    contacto = cc2.text_input("Contacto")
+    email = cc3.text_input("Email")
+    vendedor = cc4.selectbox("Ejecutivo", ["Comercial 1", "Comercial 2"])
+
+    st.markdown("---")
+    tp, ts = st.tabs([txt['sec_prod'], txt['sec_serv']])
+    
+    with tp:
+        cp1, cp2, cp3, cp4 = st.columns([3, 1, 1, 1])
+        lp = ctx['dp']['Producto'].unique().tolist() if not ctx['dp'].empty else []
+        if lp:
+            sp = cp1.selectbox("Item", lp, key="ps")
+            qp = cp2.number_input(txt['qty'], 1, 10000, 10, key="pq")
+            up = calc_xls(ctx['dp'], sp, qp, ctx['tipo']=='Loc')
+            cp3.metric(txt['unit'], f"{ctx['mon']} {up:,.2f}")
+            if cp4.button(txt['add'], key="b1"):
+                st.session_state['carrito'].append({"Ítem": "Evaluación", "Desc": sp, "Det": f"x{qp}", "Moneda": ctx['mon'], "Unit": up, "Total": up*qp})
+                st.rerun()
+
+    with ts:
+        cs1, cs2, cs3, cs4 = st.columns([3, 2, 1, 1])
+        ls = ctx['ds']['Servicio'].unique().tolist() if not ctx['ds'].empty else []
+        lf = ["Certificación PAA (Transversal)"] + ls
+        if lf:
+            ss = cs1.selectbox("Servicio", lf, key="ss")
+            if ss.startswith("Cert"):
+                cs2.write(""); qs = cs2.number_input("Pers", 1, 1000, 1, key="sq")
+                us = calc_paa(qs, ctx['mon']); dt = f"{qs} pers"
+            else:
+                crol, cqty = cs2.columns(2)
+                cols = ctx['ds'].columns.tolist()
+                rv = [r for r in ['Angelica','Senior','BM','BP'] if r in cols]
+                rol = crol.selectbox("Rol", rv) if rv else cols[-1]
+                qs = cqty.number_input(txt['qty'], 1, 1000, 1, key="sq")
+                us = 0.0
+                row = ctx['ds'][(ctx['ds']['Servicio']==ss) & (ctx['ds']['Nivel']==ctx['niv'])] if ctx['tipo']=="Int" else ctx['ds'][ctx['ds']['Servicio']==ss]
+                if not row.empty: us = float(row.iloc[0][rol])
+                dt = f"{rol} ({qs})"
+            cs3.metric(txt['unit'], f"{ctx['mon']} {us:,.2f}")
+            if cs4.button(txt['add'], key="b2"):
+                st.session_state['carrito'].append({"Ítem": "Servicio", "Desc": ss, "Det": dt, "Moneda": ctx['mon'], "Unit": us, "Total": us*qs})
+                st.rerun()
+
+    if st.session_state['carrito']:
+        st.markdown("---")
+        dfc = pd.DataFrame(st.session_state['carrito'])
+        if len(dfc['Moneda'].unique()) > 1: st.error("Error Moneda")
+        else:
+            mon = dfc['Moneda'].unique()[0]
+            st.dataframe(dfc[['Desc','Det','Unit','Total']], use_container_width=True)
+            
+            subt = dfc['Total'].sum()
+            evals = dfc[dfc['Ítem']=='Evaluación']['Total'].sum()
+            
+            colL, colR = st.columns([3, 1])
+            with colR:
+                fee = st.checkbox(txt['fee'], value=False)
+                bank = st.number_input("Bank Fee", 0.0, value=30.0 if mon=="US$" else 0.0)
+                desc = st.number_input(txt['discount'], 0.0)
+                
+                val_fee = evals * 0.10 if fee else 0
+                tax_name, tax_val = calcular_impuestos(pais_sel, subt, evals)
+                fin = subt + val_fee + tax_val + bank - desc
+                
+                st.metric(txt['grand_total'], f"{mon} {fin:,.2f}")
+                
+                if st.button(txt['save'], type="primary"):
+                    if not empresa: st.error("Falta Empresa")
+                    else:
+                        nid = f"TP-{random.randint(1000,9999)}"
+                        cli_data = {'empresa':empresa, 'contacto':contacto, 'email':email}
+                        
+                        pdf = PDF()
+                        
+                        # LOGICA SPLIT CHILE
+                        pruebas = [x for x in st.session_state['carrito'] if x['Ítem']=='Evaluación']
+                        servs = [x for x in st.session_state['carrito'] if x['Ítem']=='Servicio']
+                        
+                        if pais_sel == "Chile" and pruebas and servs:
+                            # Pagina 1: Solo Pruebas + Fee + IVA (SPA)
+                            ex1 = {'fee':fee, 'bank':0, 'desc':0, 'pais':pais_sel, 'id':nid}
+                            crear_pagina_pdf(pdf, EMPRESAS['Chile_Pruebas'], cli_data, pruebas, mon, idioma, ex1, txt['quote'])
+                            # Pagina 2: Solo Servicios + Bank + Desc (Ltda)
+                            ex2 = {'fee':False, 'bank':bank, 'desc':desc, 'pais':pais_sel, 'id':nid}
+                            crear_pagina_pdf(pdf, EMPRESAS['Chile_Servicios'], cli_data, servs, mon, idioma, ex2, txt['quote'])
+                        else:
+                            # Caso Normal: 1 sola pagina con tablas separadas
+                            ent = determinar_empresa_facturadora(pais_sel, st.session_state['carrito'])
+                            ex_full = {'fee':fee, 'bank':bank, 'desc':desc, 'pais':pais_sel, 'id':nid}
+                            crear_pagina_pdf(pdf, ent, cli_data, st.session_state['carrito'], mon, idioma, ex_full, txt['quote'])
+                            
+                        b64 = base64.b64encode(pdf.output(dest='S').encode('latin-1')).decode('latin-1')
+                        href = f'<a href="data:application/pdf;base64,{b64}" download="Cotizacion_{nid}.pdf" style="background:#003366;color:white;padding:10px;border-radius:5px;text-decoration:none;">{txt["download"]}</a>'
+                        st.markdown(href, unsafe_allow_html=True)
+                        
+                        st.session_state['cotizaciones'] = pd.concat([st.session_state['cotizaciones'], pd.DataFrame([{
+                            'id': nid, 'fecha': datetime.now().strftime("%Y-%m-%d"), 'empresa': empresa, 'pais': pais_sel,
+                            'total': fin, 'moneda': mon, 'estado': 'Enviada', 'vendedor': vendedor
+                        }])], ignore_index=True)
+                        st.session_state['carrito'] = []
+                        st.success("OK")
+            with colL:
+                if st.button("Limpiar"): st.session_state['carrito']=[]; st.rerun()
+
+# --- UTILS ---
+def determinar_empresa_facturadora(pais, items):
+    if pais == "Brasil": return EMPRESAS["Brasil"]
+    if pais in ["Perú", "Peru"]: return EMPRESAS["Peru"]
+    if pais == "Chile":
+        return EMPRESAS["Chile_Pruebas"] if any(i['Ítem']=='Evaluación' for i in items) else EMPRESAS["Chile_Servicios"]
+    return EMPRESAS["Latam"]
+
+def calcular_impuestos(pais, sub, eva):
+    if pais == "Chile": return "IVA (19% s/Pruebas)", eva*0.19
+    if pais in ["Panamá", "Panama"]: return "ITBMS (7%)", sub*0.07
+    if pais == "Honduras": return "Retención", sub*0.1111
+    return "", 0
+
+def dashboard():
+    st.title("Dashboard"); df = st.session_state['cotizaciones']
+    if not df.empty: st.dataframe(df)
+
+def finanzas():
+    st.title("Finanzas"); df = st.session_state['cotizaciones']
+    if not df.empty: st.data_editor(df, disabled=["id"], hide_index=True)
+
+with st.sidebar:
+    if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=130)
+    op = st.radio("Menu", ["Cotizador", "Dashboard", "Finanzas"])
+
+if op == "Cotizador": cotizador()
+elif op == "Dashboard": dashboard()
+elif op == "Finanzas": finanzas()

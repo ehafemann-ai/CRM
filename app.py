@@ -18,7 +18,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 1. TRADUCCIONES Y ENTIDADES (ESTÁTICO)
+# 1. TRADUCCIONES Y ENTIDADES (CORREGIDO)
 # ==============================================================================
 TEXTOS = {
     "ES": {
@@ -26,21 +26,24 @@ TEXTOS = {
         "add": "Agregar", "desc": "Descripción", "qty": "Cant", "unit": "Unitario", "total": "Total",
         "subtotal": "Subtotal", "fee": "Fee Admin (10%)", "tax": "Impuestos", "discount": "Descuento",
         "grand_total": "TOTAL A PAGAR", "download": "Descargar PDF", "invoice_to": "Facturar a",
-        "quote": "COTIZACIÓN", "date": "Fecha", "validity": "Validez: 30 días"
+        "quote": "COTIZACIÓN", "date": "Fecha", "validity": "Validez: 30 días",
+        "save": "Guardar Cotización"  # <--- ESTO FALTABA
     },
     "EN": {
         "title": "TalentPro Quote Tool", "client": "Client Details", "items": "Selection",
         "add": "Add", "desc": "Description", "qty": "Qty", "unit": "Unit Price", "total": "Total",
         "subtotal": "Subtotal", "fee": "Admin Fee (10%)", "tax": "Taxes", "discount": "Discount",
         "grand_total": "GRAND TOTAL", "download": "Download PDF", "invoice_to": "Bill to",
-        "quote": "QUOTATION", "date": "Date", "validity": "Validity: 30 days"
+        "quote": "QUOTATION", "date": "Date", "validity": "Validity: 30 days",
+        "save": "Save Quote" # <--- ESTO FALTABA
     },
     "PT": {
         "title": "Cotação TalentPro", "client": "Dados do Cliente", "items": "Seleção",
         "add": "Adicionar", "desc": "Descrição", "qty": "Qtd", "unit": "Unitário", "total": "Total",
         "subtotal": "Subtotal", "fee": "Taxa Admin (10%)", "tax": "Impostos", "discount": "Desconto",
         "grand_total": "TOTAL A PAGAR", "download": "Baixar PDF", "invoice_to": "Faturar para",
-        "quote": "COTAÇÃO", "date": "Data", "validity": "Validade: 30 dias"
+        "quote": "COTAÇÃO", "date": "Data", "validity": "Validade: 30 dias",
+        "save": "Salvar Cotação" # <--- ESTO FALTABA
     }
 }
 
@@ -388,6 +391,7 @@ def cotizador():
                 ### {txt['grand_total']}: {mon} {final:,.2f}
                 """)
                 
+                # AQUÍ ESTABA EL ERROR, AHORA USA txt['save'] QUE YA EXISTE
                 if st.button(txt['save'], type="primary"):
                     if not empresa: st.error("Error: Falta Empresa")
                     else:

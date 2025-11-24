@@ -36,7 +36,7 @@ def descargar_logo():
 descargar_logo()
 
 # ==============================================================================
-# 2. DATOS MAESTROS (TEXTOS CORREGIDOS)
+# 2. DATOS MAESTROS
 # ==============================================================================
 TEXTOS = {
     "ES": {
@@ -45,8 +45,11 @@ TEXTOS = {
         "subtotal": "Subtotal Neto", "fee": "Fee Admin (10%)", "grand_total": "TOTAL A PAGAR",
         "invoice_to": "Preparado para:", "quote": "COTIZACIÓN", "date": "Fecha", "validity": "Validez: 30 días",
         "save": "Generar Cotización", "download": "Descargar PDF",
-        "sec_prod": "Evaluaciones", "sec_serv": "Servicios Profesionales",
-        "discount": "Descuento", "tax": "Impuestos" # <-- AGREGADOS
+        "sec_prod": "Licencias y Evaluaciones", "sec_serv": "Servicios Profesionales",
+        "discount": "Descuento", "tax": "Impuestos",
+        "legal_intl": "Facturación a {pais}.\nEn cualquier caso se deben sumar los impuestos retenidos en {pais}, así como los gastos OUR asociados a comisiones bancarias en {pais}, asociadas a envío de divisas.",
+        "noshow_title": "Políticas de Asistencia y No-Show:",
+        "noshow_text": "Para Feedbacks, Coaching, Preparaciones o Entrevistas: Se permite un límite de 15% de ausencias con aviso de menos de 24 horas. Si la persona no llega y no avisó, se esperará 10 minutos y se enviará correo. Si no llega, se cobrará tarifa 'No Show' del 50% de la sesión."
     },
     "EN": {
         "title": "TalentPro Quote", "client": "Client Info",
@@ -55,7 +58,10 @@ TEXTOS = {
         "invoice_to": "Prepared for:", "quote": "QUOTATION", "date": "Date", "validity": "Validity: 30 days",
         "save": "Generate Quote", "download": "Download PDF",
         "sec_prod": "Software & Assessments", "sec_serv": "Professional Services",
-        "discount": "Discount", "tax": "Taxes" # <-- AGREGADOS
+        "discount": "Discount", "tax": "Taxes",
+        "legal_intl": "Billing to {pais}.\nWithholding taxes in {pais} must be added, as well as OUR expenses associated with bank commissions in {pais}.",
+        "noshow_title": "Attendance & No-Show Policy:",
+        "noshow_text": "For Feedbacks, Coaching, Prep or Interviews: A 15% limit on absences with less than 24h notice applies. If the person does not show up without notice, we will wait 10 mins and send an email. If they do not arrive, a 50% 'No Show' fee applies."
     },
     "PT": {
         "title": "Cotação TalentPro", "client": "Dados Cliente",
@@ -64,7 +70,10 @@ TEXTOS = {
         "invoice_to": "Preparado para:", "quote": "COTAÇÃO", "date": "Data", "validity": "Validade: 30 dias",
         "save": "Gerar Cotação", "download": "Baixar PDF",
         "sec_prod": "Software e Avaliações", "sec_serv": "Serviços Profissionais",
-        "discount": "Desconto", "tax": "Impostos" # <-- AGREGADOS
+        "discount": "Desconto", "tax": "Impostos",
+        "legal_intl": "Faturamento para {pais}.\nDevem ser somados impostos retidos no {pais}, bem como despesas OUR associadas a comissões bancárias.",
+        "noshow_title": "Política de Assistência e No-Show:",
+        "noshow_text": "Para Feedbacks, Coaching, Preparação ou Entrevistas: Limite de 15% de ausências com menos de 24h de aviso. Se a pessoa não comparecer sem aviso, aguardaremos 10 min. Se não chegar, será cobrada uma taxa de 'No Show' de 50%."
     }
 }
 
@@ -73,7 +82,7 @@ EMPRESAS = {
     "Peru": {"Nombre": "TALENTPRO S.A.C.", "ID": "DNI 25489763", "Dir": "AVENIDA EL DERBY 254, SANTIAGO DE SURCO, LIMA", "Giro": "Servicios de apoyo"},
     "Chile_Pruebas": {"Nombre": "TALENT PRO SPA", "ID": "RUT: 76.743.976-8", "Dir": "Juan de Valiente 3630, of 501, Vitacura, Santiago", "Giro": "Servicios de Selección"},
     "Chile_Servicios": {"Nombre": "TALENTPRO SERVICIOS PROFESIONALES LTDA.", "ID": "RUT: 77.704.757-4", "Dir": "Juan de Valiente 3630, of 501, Vitacura, Santiago", "Giro": "Asesoría RRHH"},
-    "Latam": {"Nombre": "TALENTPRO LATAM, S.A.", "ID": "RUC: 155723672-2-2022 DV 27", "Dir": "CALLE 50, PH GLOBAL PLAZA, OF 6D, PANAMÁ", "Giro": "Talent Services"}
+    "Latam": {"Nombre": "TALENTPRO LATAM, S.A.", "ID": "RUC: 155723672-2-2022 DV 27", "Dir": "CALLE 50, PH GLOBAL PLAZA, OF 6D, PANAMÁ", "Giro": "Talent Acquisition Services"}
 }
 
 # --- CARGAR EXCEL ---
@@ -138,13 +147,12 @@ def calc_xls(df, prod, cant, local):
                 except: return 0.0
     return 0.0
 
-# --- PDF ENGINE (SOPORTE MULTIPAGINA CHILE) ---
+# --- PDF ENGINE ---
 class PDF(FPDF):
     def header(self):
         if os.path.exists(LOGO_PATH): self.image(LOGO_PATH, 10, 10, 40)
         self.set_font('Arial', 'B', 20)
         self.set_text_color(0, 51, 102)
-        # Título dinámico seteado antes de add_page
         titulo = getattr(self, 'title_text', 'COTIZACIÓN')
         self.cell(0, 15, titulo, 0, 1, 'R')
         self.set_draw_color(0, 51, 102); self.set_line_width(0.5); self.line(10, 30, 200, 30); self.ln(5)
@@ -157,111 +165,104 @@ def crear_pagina_pdf(pdf, empresa, cliente, items, moneda, idioma, extras, titul
     pdf.add_page()
     t = TEXTOS[idioma]
     
-    # Cabecera Empresa
+    # Cabecera
     pdf.set_font("Arial", 'B', 10); pdf.set_text_color(0, 51, 102)
     pdf.cell(95, 5, empresa['Nombre'], 0, 0)
     pdf.set_text_color(100); pdf.cell(95, 5, t['invoice_to'], 0, 1)
     
     pdf.set_font("Arial", '', 9); pdf.set_text_color(50)
-    y_start = pdf.get_y()
+    y_s = pdf.get_y()
     pdf.cell(95, 5, empresa['ID'], 0, 1); pdf.multi_cell(90, 5, empresa['Dir']); pdf.cell(95, 5, empresa['Giro'], 0, 1)
     
-    # Cabecera Cliente
-    pdf.set_xy(105, y_start); pdf.set_font("Arial", 'B', 10); pdf.set_text_color(0)
+    pdf.set_xy(105, y_s); pdf.set_font("Arial", 'B', 10); pdf.set_text_color(0)
     pdf.cell(95, 5, cliente['empresa'], 0, 1)
     pdf.set_xy(105, pdf.get_y()); pdf.set_font("Arial", '', 9); pdf.set_text_color(50)
-    pdf.cell(95, 5, cliente['contacto'], 0, 1)
-    pdf.set_xy(105, pdf.get_y()); pdf.cell(95, 5, cliente['email'], 0, 1)
-    
-    # Fecha
-    pdf.ln(5)
-    pdf.set_xy(105, pdf.get_y()); pdf.set_text_color(0, 51, 102)
+    pdf.cell(95, 5, cliente['contacto'], 0, 1); pdf.set_xy(105, pdf.get_y()); pdf.cell(95, 5, cliente['email'], 0, 1)
+    pdf.ln(5); pdf.set_xy(105, pdf.get_y()); pdf.set_text_color(0, 51, 102)
     pdf.cell(95, 5, f"{t['date']}: {datetime.now().strftime('%d/%m/%Y')} | ID: {extras['id']}", 0, 1)
     pdf.ln(10)
     
-    # --- TABLAS ---
-    def draw_table(lista_items, titulo_seccion):
-        if not lista_items: return 0
+    # TABLAS
+    def draw_table(li, tit):
+        if not li: return 0
         pdf.set_font("Arial", 'B', 10); pdf.set_text_color(0, 51, 102)
-        pdf.cell(0, 8, titulo_seccion, 0, 1, 'L')
-        
+        pdf.cell(0, 8, tit, 0, 1, 'L')
         pdf.set_fill_color(0, 51, 102); pdf.set_text_color(255); pdf.set_font("Arial", 'B', 9)
         pdf.cell(110, 8, t['desc'], 0, 0, 'L', 1)
         pdf.cell(20, 8, t['qty'], 0, 0, 'C', 1)
         pdf.cell(30, 8, t['unit'], 0, 0, 'R', 1)
         pdf.cell(30, 8, t['total'], 0, 1, 'R', 1)
-        
-        pdf.set_text_color(0); pdf.set_font("Arial", '', 9)
-        pdf.set_fill_color(245)
-        sum_local = 0
-        for i in lista_items:
-            sum_local += i['Total']
-            desc = i['Desc'][:55]
-            qty = str(i['Det']).split('(')[0].replace('x','').strip()
-            try: 
-                if not qty[0].isdigit(): qty="1"
-            except: qty="1"
-                
-            pdf.cell(110, 7, f"  {desc}", 'B', 0, 'L', 1)
-            pdf.cell(20, 7, qty, 'B', 0, 'C', 1)
+        pdf.set_text_color(0); pdf.set_font("Arial", '', 9); pdf.set_fill_color(245)
+        s = 0
+        for i in li:
+            s += i['Total']
+            pdf.cell(110, 7, f"  {i['Desc'][:55]}", 'B', 0, 'L', 1)
+            pdf.cell(20, 7, str(i['Det']).split('(')[0].replace('x','').strip(), 'B', 0, 'C', 1)
             pdf.cell(30, 7, f"{i['Unit']:,.2f}", 'B', 0, 'R', 1)
             pdf.cell(30, 7, f"{i['Total']:,.2f}", 'B', 1, 'R', 1)
         pdf.ln(5)
-        return sum_local
+        return s
 
-    # Lógica de Separación
-    i_pruebas = [x for x in items if x['Ítem']=='Evaluación']
-    i_servs = [x for x in items if x['Ítem']=='Servicio']
+    ip, isv = [x for x in items if x['Ítem']=='Evaluación'], [x for x in items if x['Ítem']=='Servicio']
+    tot_p, tot_s = draw_table(ip, t['sec_prod']), draw_table(isv, t['sec_serv'])
+    subt = tot_p + tot_s
     
-    total_p = draw_table(i_pruebas, t['sec_prod'])
-    total_s = draw_table(i_servs, t['sec_serv'])
-    subtotal_pag = total_p + total_s
+    # TOTALES
+    fee = tot_p * 0.10 if (extras['fee'] and tot_p > 0) else 0
+    tax_n, tax_v = "", 0
+    if extras['pais'] == "Chile" and tot_p > 0: tax_n, tax_v = "IVA (19%)", tot_p * 0.19
+    elif extras['pais'] in ["Panamá", "Panama"]: tax_n, tax_v = "ITBMS (7%)", subt * 0.07
+    elif extras['pais'] == "Honduras": tax_n, tax_v = "Retención (11.11%)", subt * 0.1111
     
-    # Cálculos de página
-    # Fee: Solo si hay pruebas y se pidió fee
-    val_fee = total_p * 0.10 if (extras['fee'] and total_p > 0) else 0
+    fin = subt + fee + tax_v + extras.get('bank',0) - extras.get('desc',0)
     
-    # Impuestos Locales
-    tax_name, tax_val = "", 0
-    if extras['pais'] == "Chile":
-        # En Chile IVA solo a Pruebas
-        if total_p > 0: 
-            tax_name, tax_val = "IVA (19%)", total_p * 0.19
-    elif extras['pais'] in ["Panamá", "Panama"]: 
-        tax_name, tax_val = "ITBMS (7%)", subtotal_pag * 0.07
-    elif extras['pais'] == "Honduras": 
-        tax_name, tax_val = "Retención (11.11%)", subtotal_pag * 0.1111
-    
-    # Bank y Desc solo se suman si vienen en extras (la logica externa decide a que pag van)
-    bank = extras.get('bank', 0)
-    desc = extras.get('desc', 0)
-    
-    final = subtotal_pag + val_fee + tax_val + bank - desc
-    
-    # Render Totales
-    x_tab = 120
-    def row(txt, val, bold=False):
-        pdf.set_x(x_tab); pdf.set_font("Arial", 'B' if bold else '', 10)
-        pdf.set_text_color(0 if not bold else 255)
-        if bold: pdf.set_fill_color(0, 51, 102)
-        pdf.cell(35, 7, txt, 0, 0, 'R', bold)
-        pdf.cell(35, 7, f"{moneda} {val:,.2f} ", 0, 1, 'R', bold)
+    x_tb = 120
+    def row(l, v, b=False):
+        pdf.set_x(x_tb); pdf.set_font("Arial", 'B' if b else '', 10)
+        pdf.set_text_color(0 if not b else 255)
+        if b: pdf.set_fill_color(0, 51, 102)
+        pdf.cell(35, 7, l, 0, 0, 'R', b); pdf.cell(35, 7, f"{moneda} {v:,.2f} ", 0, 1, 'R', b)
 
-    row(t['subtotal'], subtotal_pag)
-    if val_fee > 0: row(t['fee'], val_fee)
-    if tax_val > 0: row(tax_name, tax_val)
-    if bank > 0: row("Bank Fee", bank)
-    if desc > 0: row("Descuento", -desc)
-    pdf.ln(1)
-    row(t['grand_total'], final, True)
+    row(t['subtotal'], subt)
+    if fee > 0: row(t['fee'], fee)
+    if tax_v > 0: row(tax_n, tax_v)
+    if extras.get('bank',0) > 0: row("Bank Fee", extras['bank'])
+    if extras.get('desc',0) > 0: row(t['discount'], -extras['desc'])
+    pdf.ln(1); row(t['grand_total'], fin, True); pdf.ln(10)
     
-    pdf.ln(10)
-    pdf.set_text_color(100); pdf.set_font("Arial", '', 8)
-    pdf.cell(0, 5, f"{t['validity']}", 0, 1)
+    # --- NOTA LEGAL INT Y NO-SHOW ---
+    pdf.set_font("Arial", 'I', 8); pdf.set_text_color(80)
+    
+    # Nota Internacional
+    if empresa['Nombre'] == EMPRESAS['Latam']['Nombre']:
+        pdf.multi_cell(0, 4, t['legal_intl'].format(pais=extras['pais']), 0, 'L'); pdf.ln(3)
+    
+    # Nota No-Show (Trigger: Feedback, Coaching, Entrevista, Preparación)
+    triggers = ['feedback', 'coaching', 'entrevista', 'preparación', 'preparação', 'interview']
+    if any(any(tr in i['Desc'].lower() for tr in triggers) for i in items):
+        pdf.set_font("Arial", 'B', 8)
+        pdf.cell(0, 4, t['noshow_title'], 0, 1)
+        pdf.set_font("Arial", '', 8)
+        pdf.multi_cell(0, 4, t['noshow_text'], 0, 'L'); pdf.ln(3)
 
-# --- UI PRINCIPAL ---
+    pdf.set_text_color(100); pdf.cell(0, 5, t['validity'], 0, 1)
+
+# --- UI ---
 if 'cotizaciones' not in st.session_state: st.session_state['cotizaciones'] = pd.DataFrame(columns=['id', 'fecha', 'empresa', 'pais', 'total', 'moneda', 'estado', 'vendedor'])
 if 'carrito' not in st.session_state: st.session_state['carrito'] = []
+
+def determinar_empresa_facturadora(pais, items):
+    if pais == "Brasil": return EMPRESAS["Brasil"]
+    if pais in ["Perú", "Peru"]: return EMPRESAS["Peru"]
+    if pais == "Chile":
+        return EMPRESAS["Chile_Pruebas"] if any(i['Ítem']=='Evaluación' for i in items) else EMPRESAS["Chile_Servicios"]
+    return EMPRESAS["Latam"]
+
+def calcular_impuestos(pais, sub, eva):
+    if pais == "Chile": return "IVA (19%)", eva*0.19
+    if pais in ["Panamá", "Panama"]: return "ITBMS (7%)", sub*0.07
+    if pais == "Honduras": return "Retención", sub*0.1111
+    return "", 0
 
 def cotizador():
     col_lang, col_tit = st.columns([1, 5])
@@ -339,8 +340,8 @@ def cotizador():
                 desc = st.number_input(txt['discount'], 0.0)
                 
                 val_fee = evals * 0.10 if fee else 0
-                tax_name, tax_val = calcular_impuestos(pais_sel, subt, evals)
-                fin = subt + val_fee + tax_val + bank - desc
+                tn, tv = calcular_impuestos(pais_sel, subt, evals)
+                fin = subt + val_fee + tv + bank - desc
                 
                 st.metric(txt['grand_total'], f"{mon} {fin:,.2f}")
                 
@@ -349,30 +350,24 @@ def cotizador():
                     else:
                         nid = f"TP-{random.randint(1000,9999)}"
                         cli_data = {'empresa':empresa, 'contacto':contacto, 'email':email}
-                        
+                        extras = {'fee':fee, 'bank':bank, 'desc':desc, 'pais':pais_sel, 'id':nid}
                         pdf = PDF()
                         
-                        # LOGICA SPLIT CHILE
                         pruebas = [x for x in st.session_state['carrito'] if x['Ítem']=='Evaluación']
                         servs = [x for x in st.session_state['carrito'] if x['Ítem']=='Servicio']
                         
                         if pais_sel == "Chile" and pruebas and servs:
-                            # Pagina 1: Solo Pruebas + Fee + IVA (SPA)
-                            ex1 = {'fee':fee, 'bank':0, 'desc':0, 'pais':pais_sel, 'id':nid}
-                            crear_pagina_pdf(pdf, EMPRESAS['Chile_Pruebas'], cli_data, pruebas, mon, idioma, ex1, txt['quote'])
-                            # Pagina 2: Solo Servicios + Bank + Desc (Ltda)
-                            ex2 = {'fee':False, 'bank':bank, 'desc':desc, 'pais':pais_sel, 'id':nid}
-                            crear_pagina_pdf(pdf, EMPRESAS['Chile_Servicios'], cli_data, servs, mon, idioma, ex2, txt['quote'])
+                            e1 = extras.copy(); e1['bank']=0; e1['desc']=0
+                            crear_pagina_pdf(pdf, EMPRESAS['Chile_Pruebas'], cli_data, pruebas, mon, idioma, e1, txt['quote'])
+                            e2 = extras.copy(); e2['fee']=False
+                            crear_pagina_pdf(pdf, EMPRESAS['Chile_Servicios'], cli_data, servs, mon, idioma, e2, txt['quote'])
                         else:
-                            # Caso Normal: 1 sola pagina con tablas separadas
                             ent = determinar_empresa_facturadora(pais_sel, st.session_state['carrito'])
-                            ex_full = {'fee':fee, 'bank':bank, 'desc':desc, 'pais':pais_sel, 'id':nid}
-                            crear_pagina_pdf(pdf, ent, cli_data, st.session_state['carrito'], mon, idioma, ex_full, txt['quote'])
+                            crear_pagina_pdf(pdf, ent, cli_data, st.session_state['carrito'], mon, idioma, extras, txt['quote'])
                             
                         b64 = base64.b64encode(pdf.output(dest='S').encode('latin-1')).decode('latin-1')
                         href = f'<a href="data:application/pdf;base64,{b64}" download="Cotizacion_{nid}.pdf" style="background:#003366;color:white;padding:10px;border-radius:5px;text-decoration:none;">{txt["download"]}</a>'
                         st.markdown(href, unsafe_allow_html=True)
-                        
                         st.session_state['cotizaciones'] = pd.concat([st.session_state['cotizaciones'], pd.DataFrame([{
                             'id': nid, 'fecha': datetime.now().strftime("%Y-%m-%d"), 'empresa': empresa, 'pais': pais_sel,
                             'total': fin, 'moneda': mon, 'estado': 'Enviada', 'vendedor': vendedor
@@ -381,20 +376,6 @@ def cotizador():
                         st.success("OK")
             with colL:
                 if st.button("Limpiar"): st.session_state['carrito']=[]; st.rerun()
-
-# --- UTILS ---
-def determinar_empresa_facturadora(pais, items):
-    if pais == "Brasil": return EMPRESAS["Brasil"]
-    if pais in ["Perú", "Peru"]: return EMPRESAS["Peru"]
-    if pais == "Chile":
-        return EMPRESAS["Chile_Pruebas"] if any(i['Ítem']=='Evaluación' for i in items) else EMPRESAS["Chile_Servicios"]
-    return EMPRESAS["Latam"]
-
-def calcular_impuestos(pais, sub, eva):
-    if pais == "Chile": return "IVA (19% s/Pruebas)", eva*0.19
-    if pais in ["Panamá", "Panama"]: return "ITBMS (7%)", sub*0.07
-    if pais == "Honduras": return "Retención", sub*0.1111
-    return "", 0
 
 def dashboard():
     st.title("Dashboard"); df = st.session_state['cotizaciones']

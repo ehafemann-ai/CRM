@@ -45,7 +45,7 @@ TEXTOS = {
         "subtotal": "Subtotal Neto", "fee": "Fee Admin (10%)", "grand_total": "TOTAL A PAGAR",
         "invoice_to": "Preparado para:", "quote": "COTIZACIÓN", "date": "Fecha", "validity": "Validez: 30 días",
         "save": "Generar Cotización", "download": "Descargar PDF",
-        "sec_prod": "Software y Evaluaciones", "sec_serv": "Servicios Profesionales"
+        "sec_prod": "Evaluaciones", "sec_serv": "Servicios Profesionales"
     },
     "EN": {
         "title": "TalentPro Quote", "client": "Client Info",
@@ -53,7 +53,7 @@ TEXTOS = {
         "subtotal": "Net Subtotal", "fee": "Admin Fee (10%)", "grand_total": "GRAND TOTAL",
         "invoice_to": "Prepared for:", "quote": "QUOTATION", "date": "Date", "validity": "Validity: 30 days",
         "save": "Generate Quote", "download": "Download PDF",
-        "sec_prod": "Software & Assessments", "sec_serv": "Professional Services"
+        "sec_prod": "Assessments", "sec_serv": "Professional Services"
     },
     "PT": {
         "title": "Cotação TalentPro", "client": "Dados Cliente",
@@ -61,7 +61,7 @@ TEXTOS = {
         "subtotal": "Subtotal Líquido", "fee": "Taxa Admin (10%)", "grand_total": "TOTAL A PAGAR",
         "invoice_to": "Preparado para:", "quote": "COTAÇÃO", "date": "Data", "validity": "Validade: 30 dias",
         "save": "Gerar Cotação", "download": "Baixar PDF",
-        "sec_prod": "Software e Avaliações", "sec_serv": "Serviços Profissionais"
+        "sec_prod": "Avaliações", "sec_serv": "Serviços Profissionais"
     }
 }
 

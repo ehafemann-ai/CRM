@@ -31,7 +31,7 @@ st.markdown("""
 
 # Usuario Maestro
 SUPER_ADMIN_USER = "ehafemann@talentpro-latam.com"
-SUPER_ADMIN_PASS = "TalentPro_2019"
+SUPER_ADMIN_PASS = "Max1234"  # <--- CONTRASEÑA ACTUALIZADA
 
 if 'users_db' not in st.session_state:
     st.session_state['users_db'] = {
@@ -58,19 +58,18 @@ def login_page():
             submit = st.form_submit_button("Iniciar Sesión", use_container_width=True)
             
             if submit:
-                # --- CORRECCIÓN DEL ERROR AQUÍ ---
-                if username in st.session_state['users_db']:
-                    if st.session_state['users_db'][username]['pass'] == password:
-                        st.session_state['auth_status'] = True
-                        st.session_state['current_user'] = username
-                        st.session_state['current_role'] = st.session_state['users_db'][username]['role']
-                        st.success("¡Bienvenido!")
-                        time.sleep(0.5)
-                        st.rerun()
-                    else:
-                        st.error("Contraseña incorrecta.")
+                # Lógica defensiva para evitar errores
+                user_data = st.session_state['users_db'].get(username)
+                
+                if user_data and user_data['pass'] == password:
+                    st.session_state['auth_status'] = True
+                    st.session_state['current_user'] = username
+                    st.session_state['current_role'] = user_data['role']
+                    st.success("¡Bienvenido!")
+                    time.sleep(0.5)
+                    st.rerun()
                 else:
-                    st.error("Usuario no encontrado.")
+                    st.error("Usuario o contraseña incorrectos.")
 
 def logout():
     st.session_state['auth_status'] = False

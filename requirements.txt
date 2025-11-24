@@ -5,3 +5,4 @@ openpyxl
 requests
 fpdf
 streamlit-option-menu
+bcrypt

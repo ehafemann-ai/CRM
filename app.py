@@ -29,13 +29,13 @@ st.markdown("""
 # 1. SISTEMA DE AUTENTICACIÓN Y USUARIOS
 # ==============================================================================
 
-# Usuario Maestro
+# Usuario Maestro (CORREGIDO CON GUION)
 SUPER_ADMIN_USER = "ehafemann@talentpro-latam.com"
 SUPER_ADMIN_PASS = "TalentPro_2019"
 
 if 'users_db' not in st.session_state:
     st.session_state['users_db'] = {
-        SUPER_ADMIN_USER: {'password': SUPER_ADMIN_PASS, 'role': 'Super Admin', 'name': 'Emilio Hafemann'}
+        SUPER_ADMIN_USER: {'pass': SUPER_ADMIN_PASS, 'role': 'Super Admin', 'name': 'Emilio Hafemann'}
     }
 
 if 'auth_status' not in st.session_state:
@@ -58,8 +58,9 @@ def login_page():
             submit = st.form_submit_button("Iniciar Sesión", use_container_width=True)
             
             if submit:
+                # Lógica de validación con indentación correcta
                 if username in st.session_state['users_db']:
-                    if st.session_state['users_db'][username]['pass'] == password: TalentPro_2019
+                    if st.session_state['users_db'][username]['pass'] == password:
                         st.session_state['auth_status'] = True
                         st.session_state['current_user'] = username
                         st.session_state['current_role'] = st.session_state['users_db'][username]['role']
@@ -77,6 +78,7 @@ def logout():
     st.session_state['current_role'] = None
     st.rerun()
 
+# BLOQUEO DE SEGURIDAD
 if not st.session_state['auth_status']:
     login_page()
     st.stop()

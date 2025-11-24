@@ -8,9 +8,10 @@ from fpdf import FPDF
 import base64
 import plotly.express as px
 from streamlit_option_menu import option_menu
+import time
 
 # --- CONFIGURACIÓN GLOBAL ---
-st.set_page_config(page_title="TalentPro ERP", layout="wide", page_icon="🚀")
+st.set_page_config(page_title="TalentPro ERP", layout="wide", page_icon="🔒")
 
 # ESTILOS CSS
 st.markdown("""
@@ -20,24 +21,78 @@ st.markdown("""
     .stMetric {background-color: #ffffff; border: 1px solid #e6e6e6; padding: 15px; border-radius: 8px; box-shadow: 2px 2px 5px rgba(0,0,0,0.05);}
     div.stButton > button:first-child { background-color: #003366; color: white; border-radius: 8px; font-weight: bold;}
     [data-testid="stSidebar"] { padding-top: 0rem; }
+    .login-box { padding: 2rem; border-radius: 10px; background-color: #f0f2f6; text-align: center; }
     </style>
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 1. RECURSOS Y CARGA DE DATOS
+# 1. SISTEMA DE AUTENTICACIÓN Y USUARIOS
 # ==============================================================================
-LOGO_PATH = "logo_talentpro.jpg"
 
+# Usuario Maestro Hardcodeado
+SUPER_ADMIN_USER = "ehafemann@talentpro+latam.com"
+SUPER_ADMIN_PASS = "TalentPro_2019"
+
+if 'users_db' not in st.session_state:
+    # Base de datos de usuarios en memoria
+    st.session_state['users_db'] = {
+        SUPER_ADMIN_USER: {'pass': SUPER_ADMIN_PASS, 'role': 'Super Admin', 'name': 'Emilio Hafemann'}
+    }
+
+if 'auth_status' not in st.session_state: st.session_state['auth_status'] = False
+if 'current_user' not in st.session_state: st.session_state['current_user'] = None
+if 'current_role' not in st.session_state: st.session_state['current_role'] = None
+
+def login_page():
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        st.image("https://bukwebapp-enterprise-chile.s3.amazonaws.com/talentpro/generals/logo_login/logo_login.jpg", width=300)
+        st.markdown("### Acceso Corporativo")
+        
+        with st.form("login_form"):
+            username = st.text_input("Usuario / Email")
+            password = st.text_input("Contraseña", type="password")
+            submit = st.form_submit_button("Iniciar Sesión", use_container_width=True)
+            
+            if submit:
+                if username in st.session_state['users_db']:
+                    if st.session_state['users_db'][username]['pass'] == password:
+                        st.session_state['auth_status'] = True
+                        st.session_state['current_user'] = username
+                        st.session_state['current_role'] = st.session_state['users_db'][username]['role']
+                        st.success("¡Bienvenido!")
+                        time.sleep(0.5)
+                        st.rerun()
+                    else:
+                        st.error("Contraseña incorrecta.")
+                else:
+                    st.error("Usuario no encontrado.")
+
+def logout():
+    st.session_state['auth_status'] = False
+    st.session_state['current_user'] = None
+    st.session_state['current_role'] = None
+    st.rerun()
+
+# SI NO ESTÁ LOGUEADO, DETENER TODO AQUÍ Y MOSTRAR LOGIN
+if not st.session_state['auth_status']:
+    login_page()
+    st.stop()
+
+# ==============================================================================
+# 2. APLICACIÓN PRINCIPAL (SOLO ACCESIBLE SI LOGUEADO)
+# ==============================================================================
+
+# --- RECURSOS ---
+LOGO_PATH = "logo_talentpro.jpg"
 @st.cache_resource
 def descargar_logo():
     if not os.path.exists(LOGO_PATH):
         try:
             r = requests.get("https://bukwebapp-enterprise-chile.s3.amazonaws.com/talentpro/generals/logo_login/logo_login.jpg")
-            if r.status_code == 200:
-                with open(LOGO_PATH, 'wb') as f:
-                    f.write(r.content)
-        except:
-            pass
+            if r.status_code == 200: with open(LOGO_PATH, 'wb') as f: f.write(r.content)
+        except: pass
 descargar_logo()
 
 @st.cache_data(ttl=60)
@@ -52,14 +107,10 @@ def cargar_datos():
     except: return None, None, None, None, None, None, None
 
 data = cargar_datos()
-if data[0] is None:
-    st.error("Falta 'precios.xlsx'")
-    st.stop()
-
+if data[0] is None: st.error("Falta 'precios.xlsx'"); st.stop()
 df_p_usd, df_s_usd, df_config, df_p_cl, df_s_cl, df_p_br, df_s_br = data
 TODOS_LOS_PAISES = sorted(df_config['Pais'].unique().tolist()) if not df_config.empty else ["Chile", "Brasil"]
 
-# --- INDICADORES ECONÓMICOS (API) ---
 @st.cache_data(ttl=3600)
 def obtener_indicadores():
     t = {"UF": 38000, "USD_CLP": 980, "USD_BRL": 5.8}
@@ -72,9 +123,8 @@ def obtener_indicadores():
     return t
 TASAS = obtener_indicadores()
 
-# --- TEXTOS Y ENTIDADES ---
 TEXTOS = {
-    "ES": {"title": "Cotizador", "client": "Cliente", "add": "Agregar", "desc": "Descripción", "qty": "Cant.", "unit": "Unitario", "total": "Total", "subtotal": "Subtotal", "fee": "Fee Admin (10%)", "grand_total": "TOTAL", "invoice_to": "Facturar a:", "quote": "COTIZACIÓN", "date": "Fecha", "validity": "Validez: 30 días", "save": "Guardar y Enviar", "download": "Descargar PDF", "sec_prod": "Assessments", "sec_serv": "Servicios", "discount": "Descuento", "tax": "Impuestos", "legal_intl": "Facturación a {pais}. Sumar impuestos retenidos y gastos OUR.", "noshow_title": "Política No-Show:", "noshow_text": "Multa 50% por inasistencia sin aviso 24h."},
+    "ES": {"title": "Cotizador", "client": "Cliente", "add": "Agregar", "desc": "Descripción", "qty": "Cant.", "unit": "Unitario", "total": "Total", "subtotal": "Subtotal", "fee": "Fee Admin (10%)", "grand_total": "TOTAL", "invoice_to": "Facturar a:", "quote": "COTIZACIÓN", "date": "Fecha", "validity": "Validez: 30 días", "save": "Guardar y Enviar", "download": "Descargar PDF", "sec_prod": "Licencias", "sec_serv": "Servicios", "discount": "Descuento", "tax": "Impuestos", "legal_intl": "Facturación a {pais}. Sumar impuestos retenidos y gastos OUR.", "noshow_title": "Política No-Show:", "noshow_text": "Multa 50% por inasistencia sin aviso 24h."},
     "EN": {"title": "Quote Tool", "client": "Client", "add": "Add", "desc": "Description", "qty": "Qty", "unit": "Price", "total": "Total", "subtotal": "Subtotal", "fee": "Admin Fee", "grand_total": "TOTAL", "invoice_to": "Bill to:", "quote": "QUOTATION", "date": "Date", "validity": "Valid: 30 days", "save": "Save & Send", "download": "Download PDF", "sec_prod": "Licenses", "sec_serv": "Services", "discount": "Discount", "tax": "Taxes", "legal_intl": "Billing to {pais}. Add withholding taxes and OUR bank fees.", "noshow_title": "No-Show Policy:", "noshow_text": "50% fee for absence without 24h notice."},
     "PT": {"title": "Cotação", "client": "Cliente", "add": "Adicionar", "desc": "Descrição", "qty": "Qtd", "unit": "Unitário", "total": "Total", "subtotal": "Subtotal", "fee": "Taxa Admin", "grand_total": "TOTAL", "invoice_to": "Faturar para:", "quote": "COTAÇÃO", "date": "Data", "validity": "Validade: 30 dias", "save": "Salvar e Enviar", "download": "Baixar PDF", "sec_prod": "Licenças", "sec_serv": "Serviços", "discount": "Desconto", "tax": "Impostos", "legal_intl": "Faturamento para {pais}. Adicionar impostos retidos e taxas bancárias.", "noshow_title": "Política No-Show:", "noshow_text": "Multa de 50% por ausência sem aviso de 24h."}
 }
@@ -86,17 +136,10 @@ EMPRESAS = {
     "Latam": {"Nombre": "TALENTPRO LATAM, S.A.", "ID": "RUC: 155723672-2", "Dir": "CALLE 50, GLOBAL PLAZA, PANAMÁ", "Giro": "Talent Services"}
 }
 
-# ==============================================================================
-# 2. LÓGICA DE NEGOCIO
-# ==============================================================================
-if 'cotizaciones' not in st.session_state: 
-    st.session_state['cotizaciones'] = pd.DataFrame([
-        {'id': 'TP-1001', 'fecha': '2024-11-01', 'empresa': 'Coca Cola', 'pais': 'Chile', 'moneda': 'UF', 'total': 150.5, 'estado': 'Facturada', 'vendedor': 'Comercial 1', 'idioma': 'ES'},
-        {'id': 'TP-1002', 'fecha': '2024-11-15', 'empresa': 'Walmart', 'pais': 'Estados Unidos', 'moneda': 'US$', 'total': 5000, 'estado': 'Aprobada', 'vendedor': 'Comercial 2', 'idioma': 'EN'},
-        {'id': 'TP-1003', 'fecha': '2024-11-20', 'empresa': 'Embraer', 'pais': 'Brasil', 'moneda': 'R$', 'total': 12000, 'estado': 'Enviada', 'vendedor': 'Comercial 1', 'idioma': 'PT'},
-    ])
+if 'cotizaciones' not in st.session_state: st.session_state['cotizaciones'] = pd.DataFrame(columns=['id', 'fecha', 'empresa', 'pais', 'total', 'moneda', 'estado', 'vendedor'])
 if 'carrito' not in st.session_state: st.session_state['carrito'] = []
 
+# --- FUNCIONES CORE ---
 def obtener_contexto(pais):
     if pais == "Chile": return {"mon": "UF", "dp": df_p_cl, "ds": df_s_cl, "tipo": "Loc"}
     if pais in ["Brasil", "Brazil"]: return {"mon": "R$", "dp": df_p_br, "ds": df_s_br, "tipo": "Loc"}
@@ -152,7 +195,6 @@ def generar_pdf_final(emp, cli, items, calc, lang, extras, tit):
     pdf.ln(5); pdf.set_xy(105,pdf.get_y()); pdf.set_text_color(0,51,102)
     pdf.cell(95,5,f"{t['date']}: {datetime.now().strftime('%d/%m/%Y')} | ID: {extras['id']}",0,1); pdf.ln(10)
     
-    # Tabla
     pdf.set_fill_color(0,51,102); pdf.set_text_color(255); pdf.set_font("Arial",'B',9)
     pdf.cell(110,8,t['desc'],0,0,'L',1); pdf.cell(20,8,t['qty'],0,0,'C',1); pdf.cell(30,8,t['unit'],0,0,'R',1); pdf.cell(30,8,t['total'],0,1,'R',1)
     pdf.set_text_color(0); pdf.set_font("Arial",'',8); mon=items[0]['Moneda']
@@ -162,7 +204,6 @@ def generar_pdf_final(emp, cli, items, calc, lang, extras, tit):
         pdf.cell(30,7,f"{i['Unit']:,.2f}",'B',0,'R'); pdf.cell(30,7,f"{i['Total']:,.2f}",'B',1,'R')
     pdf.ln(5)
     
-    # Totales
     x=120
     def r(l,v,b=False):
         pdf.set_x(x); pdf.set_font("Arial",'B' if b else '',10); pdf.set_text_color(0 if not b else 255)
@@ -175,7 +216,6 @@ def generar_pdf_final(emp, cli, items, calc, lang, extras, tit):
     if extras.get('desc',0)>0: r(t['discount'], -extras['desc'])
     pdf.ln(1); r(t['grand_total'], calc['total'], True); pdf.ln(10)
     
-    # Legal
     pdf.set_font("Arial",'I',8); pdf.set_text_color(80)
     if emp['Nombre']==EMPRESAS['Latam']['Nombre']: pdf.multi_cell(0,4,t['legal_intl'].format(pais=extras['pais']),0,'L'); pdf.ln(3)
     trigs=['feedback','coaching','entrevista','preparación','preparação','interview']
@@ -185,24 +225,16 @@ def generar_pdf_final(emp, cli, items, calc, lang, extras, tit):
     pdf.set_text_color(100); pdf.cell(0,5,t['validity'],0,1)
     return pdf.output(dest='S').encode('latin-1')
 
-# ==============================================================================
-# 3. MÓDULOS (VISTAS)
-# ==============================================================================
-
+# --- VISTAS ---
 def modulo_cotizador():
     cl, ct = st.columns([1,5]); idi = cl.selectbox("🌐", ["ES","EN","PT"]); txt = TEXTOS[idi]; ct.title(txt['title'])
-    
-    # INDICADORES
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("UF (CL)", f"${TASAS['UF']:,.0f}")
-    k2.metric("USD (CL)", f"${TASAS['USD_CLP']:,.0f}")
-    k3.metric("USD (BR)", f"R$ {TASAS['USD_BRL']:.2f}")
+    k1.metric("UF", f"${TASAS['UF']:,.0f}"); k2.metric("USD", f"${TASAS['USD_CLP']:,.0f}"); k3.metric("BRL", f"{TASAS['USD_BRL']:.2f}")
     
     st.markdown("---")
-    
     c1, c2 = st.columns([1,2]); idx = TODOS_LOS_PAISES.index("Chile") if "Chile" in TODOS_LOS_PAISES else 0
     ps = c1.selectbox("🌎 País", TODOS_LOS_PAISES, index=idx); ctx = obtener_contexto(ps)
-    c2.info(f"Moneda: **{ctx['mon']}** | Tarifas: **{ctx['tipo']}** {ctx.get('niv','')}")
+    c2.info(f"Mon: **{ctx['mon']}** | Tipo: **{ctx['tipo']}** {ctx.get('niv','')}")
     
     st.markdown("---"); cc1,cc2,cc3,cc4=st.columns(4)
     emp=cc1.text_input(txt['client']); con=cc2.text_input("Contacto"); ema=cc3.text_input("Email"); ven=cc4.selectbox("Ejecutivo",["Comercial 1","Comercial 2"])
@@ -231,7 +263,7 @@ def modulo_cotizador():
 
     if st.session_state['carrito']:
         st.markdown("---"); dfc=pd.DataFrame(st.session_state['carrito'])
-        if len(dfc['Moneda'].unique())>1: st.error("Error: Monedas mezcladas"); return
+        if len(dfc['Moneda'].unique())>1: st.error("Error Monedas"); return
         mon=dfc['Moneda'].unique()[0]; st.dataframe(dfc[['Desc','Det','Unit','Total']],use_container_width=True)
         sub=dfc['Total'].sum(); eva=dfc[dfc['Ítem']=='Evaluación']['Total'].sum()
         
@@ -249,14 +281,9 @@ def modulo_cotizador():
                 
                 pr, sv = [x for x in st.session_state['carrito'] if x['Ítem']=='Evaluación'], [x for x in st.session_state['carrito'] if x['Ítem']=='Servicio']
                 if ps=="Chile" and pr and sv:
-                    # SPLIT CHILE
-                    ex1=ext.copy(); ex1.update({'bank':0,'desc':0})
-                    # Solo generamos el PDF de Servicios para el usuario en este paso,
-                    # pero en un sistema real se enviarían los dos. Aquí para no complicar la UI
-                    # generamos un PDF de Servicios pero con una nota visual.
-                    # Lo ideal es generar el PDF que contiene los servicios primero.
-                    pdf_b = generar_pdf_final(EMPRESAS['Chile_Servicios'],cli,sv,{'subtotal':sum(x['Total'] for x in sv),'fee':0,'tax_val':0,'tax_name':'','total':sum(x['Total'] for x in sv)+bnk-dsc},idi,ext,txt['quote'])
-                    st.warning("ℹ️ Chile Mixto: Has mezclado Pruebas y Servicios. Legalmente requieren facturas separadas. Este PDF muestra la parte de Servicios. Deberías generar otra cotización solo para las Pruebas.")
+                    ex2=ext.copy(); ex2['fee']=False
+                    pdf_b = generar_pdf_final(EMPRESAS['Chile_Servicios'],cli,sv,{'subtotal':sum(x['Total'] for x in sv),'fee':0,'tax_val':0,'tax_name':'','total':sum(x['Total'] for x in sv)+bnk-dsc},idi,ex2,txt['quote'])
+                    st.warning("⚠️ Chile Mixto: Generando PDF Servicios. Crea cotización aparte para Pruebas.")
                 else:
                     ent=get_empresa(ps,st.session_state['carrito'])
                     calc={'subtotal':sub,'fee':vfee,'tax_name':tn,'tax_val':tv,'total':fin}
@@ -264,89 +291,82 @@ def modulo_cotizador():
                 
                 b64=base64.b64encode(pdf_b).decode('latin-1')
                 st.markdown(f'<a href="data:application/pdf;base64,{b64}" download="Cot_{nid}.pdf" class="stButton">{txt["download"]}</a>',unsafe_allow_html=True)
-                
                 st.session_state['cotizaciones']=pd.concat([st.session_state['cotizaciones'], pd.DataFrame([{
                     'id':nid, 'fecha':datetime.now().strftime("%Y-%m-%d"), 'empresa':emp, 'pais':ps,
                     'total':fin, 'moneda':mon, 'estado':'Enviada', 'vendedor':ven, 'idioma':idi
                 }])], ignore_index=True)
-                st.session_state['carrito']=[]; st.success("Guardado Exitoso")
+                st.session_state['carrito']=[]; st.success("OK")
         with cL:
             if st.button("Limpiar"): st.session_state['carrito']=[]; st.rerun()
 
 def modulo_seguimiento():
-    st.title("🤝 Seguimiento Comercial")
-    df = st.session_state['cotizaciones']
-    if df.empty: st.info("No hay cotizaciones."); return
-    
-    col_f1, col_f2 = st.columns(2)
-    filtro_vend = col_f1.multiselect("Filtrar por Ejecutivo", df['vendedor'].unique())
-    df_view = df[df['vendedor'].isin(filtro_vend)] if filtro_vend else df
-    df_act = df_view[df_view['estado'].isin(['Enviada', 'Aprobada', 'Rechazada'])]
-    
-    st.write("### Mis Cotizaciones Activas")
-    for index, row in df_act.iterrows():
-        with st.expander(f"{row['id']} | {row['empresa']} | {row['moneda']} {row['total']:,.2f} | {row['estado']}"):
-            c1, c2, c3 = st.columns([2,2,1])
-            c1.write(f"**Fecha:** {row['fecha']}"); c1.write(f"**País:** {row['pais']}")
-            new_status = c2.selectbox("Estado", ["Enviada", "Aprobada", "Rechazada"], index=["Enviada", "Aprobada", "Rechazada"].index(row['estado']), key=f"st_{row['id']}")
-            if new_status != row['estado']:
-                if c3.button("Actualizar", key=f"btn_{row['id']}"):
-                    st.session_state['cotizaciones'].at[index, 'estado'] = new_status; st.rerun()
+    st.title("🤝 Seguimiento"); df=st.session_state['cotizaciones']
+    if df.empty: st.info("Vacio"); return
+    f1,f2=st.columns(2); vend=f1.multiselect("Ejecutivo",df['vendedor'].unique())
+    dv=df[df['vendedor'].isin(vend)] if vend else df
+    da=dv[dv['estado'].isin(['Enviada','Aprobada','Rechazada'])]
+    for i, r in da.iterrows():
+        with st.expander(f"{r['id']} | {r['empresa']} | {r['moneda']} {r['total']:,.2f}"):
+            c1,c2,c3=st.columns([2,2,1]); c1.write(f"{r['fecha']} - {r['pais']}")
+            ns=c2.selectbox("Estado",["Enviada","Aprobada","Rechazada"],index=["Enviada","Aprobada","Rechazada"].index(r['estado']),key=f"s{r['id']}")
+            if ns!=r['estado']: 
+                if c3.button("Upd",key=f"b{r['id']}"): st.session_state['cotizaciones'].at[i,'estado']=ns; st.rerun()
 
 def modulo_finanzas():
-    st.title("💰 Facturación y Cobranza")
-    df = st.session_state['cotizaciones']
-    k1, k2 = st.columns(2)
-    ready = len(df[df['estado'] == 'Aprobada'])
-    k1.metric("Por Facturar (Aprobadas)", f"{ready}")
-    st.markdown("---"); st.subheader("🔔 Cotizaciones Listas para Facturar")
-    df_ready = df[df['estado'] == 'Aprobada']
-    if df_ready.empty: st.info("No hay pendientes.")
-    else:
-        for index, row in df_ready.iterrows():
-            with st.container():
-                c1, c2, c3, c4 = st.columns([1, 2, 1, 1])
-                c1.write(f"**{row['id']}**"); c2.write(f"{row['empresa']} ({row['pais']})"); c3.write(f"**{row['moneda']} {row['total']:,.2f}**")
-                if c4.button("✅ Facturar", key=f"fin_{row['id']}"):
-                    st.session_state['cotizaciones'].at[index, 'estado'] = 'Facturada'; st.rerun()
-                st.divider()
-    st.markdown("---"); st.subheader("📚 Histórico Facturado"); st.dataframe(df[df['estado'] == 'Facturada'], use_container_width=True)
+    st.title("💰 Finanzas"); df=st.session_state['cotizaciones']
+    df_ok=df[df['estado']=='Aprobada']
+    st.metric("Por Facturar", len(df_ok))
+    if not df_ok.empty:
+        st.write("Pendientes:")
+        for i, r in df_ok.iterrows():
+            c1,c2,c3=st.columns([3,2,1])
+            c1.write(f"**{r['id']}** {r['empresa']}"); c2.write(f"{r['moneda']} {r['total']:,.2f}")
+            if c3.button("Facturar",key=f"f{r['id']}"): st.session_state['cotizaciones'].at[i,'estado']='Facturada'; st.rerun()
+            st.divider()
+    st.write("Histórico:"); st.dataframe(df[df['estado']=='Facturada'])
 
 def modulo_dashboard():
-    st.title("📊 Tablero de Control")
-    df = st.session_state['cotizaciones']
-    if df.empty: st.warning("Sin datos."); return
-    st.sidebar.markdown("### Filtros Dashboard")
-    f_pais = st.sidebar.multiselect("País", df['pais'].unique())
-    f_vend = st.sidebar.multiselect("Ejecutivo", df['vendedor'].unique())
-    df_d = df.copy()
-    if f_pais: df_d = df_d[df_d['pais'].isin(f_pais)]
-    if f_vend: df_d = df_d[df_d['vendedor'].isin(f_vend)]
-    
-    c1, c2 = st.columns(2)
-    status_counts = df_d['estado'].value_counts().reset_index(); status_counts.columns = ['Estado', 'Cantidad']
-    fig_pie = px.pie(status_counts, values='Cantidad', names='Estado', title='Estado Pipeline', color='Estado', color_discrete_map={'Enviada':'orange', 'Aprobada':'green', 'Facturada':'blue', 'Rechazada':'red'})
-    c1.plotly_chart(fig_pie, use_container_width=True)
-    
-    df_sales = df_d[df_d['estado'].isin(['Aprobada', 'Facturada'])]
-    if not df_sales.empty:
-        sales_by_country = df_sales.groupby(['pais', 'moneda'])['total'].sum().reset_index()
-        fig_bar = px.bar(sales_by_country, x='pais', y='total', color='moneda', title='Ventas por País', barmode='group')
-        c2.plotly_chart(fig_bar, use_container_width=True)
-    
-    st.markdown("### 🔎 Detalle"); st.dataframe(df_d, use_container_width=True)
+    st.title("📊 Dash"); df=st.session_state['cotizaciones']
+    if df.empty: return
+    c1,c2=st.columns(2)
+    res=df['estado'].value_counts().reset_index(); res.columns=['Estado','Cant']
+    c1.plotly_chart(px.pie(res,values='Cant',names='Estado',title='Pipeline'),use_container_width=True)
+    df_s=df[df['estado'].isin(['Aprobada','Facturada'])]
+    if not df_s.empty:
+        c2.plotly_chart(px.bar(df_s.groupby(['pais','moneda'])['total'].sum().reset_index(), x='pais', y='total', color='moneda'), use_container_width=True)
 
-# --- NAVEGACIÓN LATERAL ---
+def modulo_admin():
+    st.title("👥 Usuarios")
+    st.write(f"Admin: {st.session_state['current_user']}")
+    
+    with st.form("new_user"):
+        st.write("Crear Nuevo Usuario")
+        nu=st.text_input("Email"); np=st.text_input("Pass",type="password"); nr=st.selectbox("Rol",["Comercial","Finanzas","Super Admin"])
+        if st.form_submit_button("Crear"):
+            st.session_state['users_db'][nu]={'pass':np,'role':nr,'name':nu}
+            st.success(f"Creado: {nu}")
+    
+    st.write("Base de Datos (Sesión):")
+    st.json(st.session_state['users_db'])
+
+# --- APP ---
 with st.sidebar:
-    if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=180)
-    st.markdown("---")
-    menu = option_menu("Menú", ["Cotizador", "Seguimiento", "Finanzas", "Dashboard"], 
-        icons=['file-earmark-plus', 'clipboard-check', 'currency-dollar', 'bar-chart-fill'], 
-        menu_icon="cast", default_index=0,
-        styles={"nav-link-selected": {"background-color": "#003366"}})
-    st.caption("v4.2 - TalentPro Enterprise")
+    if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=130)
+    
+    # Menú dinámico según rol
+    role = st.session_state.get('current_role', 'Comercial')
+    opts = ["Cotizador", "Seguimiento", "Finanzas", "Dashboard"]
+    icos = ['file-earmark-plus', 'clipboard-check', 'currency-dollar', 'bar-chart-fill']
+    
+    if role == "Super Admin":
+        opts.append("Usuarios"); icos.append("people-fill")
+        
+    menu = option_menu("Menú", opts, icons=icos, menu_icon="cast", default_index=0, styles={"nav-link-selected": {"background-color": "#003366"}})
+    
+    if st.button("Cerrar Sesión"): logout()
 
 if menu == "Cotizador": modulo_cotizador()
 elif menu == "Seguimiento": modulo_seguimiento()
 elif menu == "Finanzas": modulo_finanzas()
 elif menu == "Dashboard": modulo_dashboard()
+elif menu == "Usuarios": modulo_admin()

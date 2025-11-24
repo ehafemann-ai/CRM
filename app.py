@@ -57,7 +57,7 @@ TEXTOS = {
         "subtotal": "Net Subtotal", "fee": "Admin Fee (10%)", "grand_total": "GRAND TOTAL",
         "invoice_to": "Prepared for:", "quote": "QUOTATION", "date": "Date", "validity": "Validity: 30 days",
         "save": "Generate Quote", "download": "Download PDF",
-        "sec_prod": "Software & Assessments", "sec_serv": "Professional Services",
+        "sec_prod": "Assessments", "sec_serv": "Professional Services",
         "discount": "Discount", "tax": "Taxes",
         "legal_intl": "Billing to {pais}.\nWithholding taxes in {pais} must be added, as well as OUR expenses associated with bank commissions in {pais}.",
         "noshow_title": "Attendance & No-Show Policy:",

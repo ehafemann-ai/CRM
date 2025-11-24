@@ -22,7 +22,7 @@ st.markdown("""<style>
 </style>""", unsafe_allow_html=True)
 
 # ==============================================================================
-# 1. GESTIÓN DE USUARIOS (CON RECUPERACIÓN DE CONTRASEÑA)
+# 1. GESTIÓN DE USUARIOS
 # ==============================================================================
 def cargar_usuarios_github():
     try:
@@ -31,35 +31,28 @@ def cargar_usuarios_github():
         if r.status_code == 200:
             content = base64.b64decode(r.json()['content']).decode('utf-8')
             return json.loads(content), r.json()['sha']
-        return {}, None
+        else:
+            hashed = bcrypt.hashpw("Max1234".encode(), bcrypt.gensalt()).decode()
+            return {"ehafemann@talentpro-latam.com": {"name": "Emilio H.", "role": "Super Admin", "password_hash": hashed}}, None
     except: return {}, None
 
 def guardar_usuarios_github(users_dict, sha):
     try:
         json_str = json.dumps(users_dict, indent=4)
         content_b64 = base64.b64encode(json_str.encode()).decode()
-        data = {"message": "Update users db", "content": content_b64}
-        if sha: data["sha"] = sha
+        data = {"message": "Update users db", "content": content_b64, "sha": sha}
         headers = {"Authorization": f"token {st.secrets['github']['token']}", "Accept": "application/vnd.github.v3+json"}
         r = requests.put(st.secrets['github']['url_usuarios'], headers=headers, json=data)
         return r.status_code in [200, 201]
     except: return False
 
-# INICIALIZAR Y FORZAR ADMIN
 if 'users_db' not in st.session_state:
     users, sha = cargar_usuarios_github()
-    
-    # --- LÓGICA DE RESCATE ---
-    # Forzamos que tu usuario SIEMPRE tenga la clave TalentPro_2025 en la sesión actual
-    # independientemente de lo que diga el archivo antiguo en GitHub.
     admin_email = "ehafemann@talentpro-latam.com"
-    new_hash = bcrypt.hashpw("TalentPro_2025".encode(), bcrypt.gensalt()).decode()
-    
-    if admin_email in users:
-        users[admin_email]['password_hash'] = new_hash # Actualizamos el hash existente
-    else:
-        users[admin_email] = {"name": "Emilio Hafemann", "role": "Super Admin", "password_hash": new_hash}
-    
+    # Respaldo de emergencia para asegurar acceso Admin
+    if admin_email not in users:
+        hashed = bcrypt.hashpw("Max1234".encode(), bcrypt.gensalt()).decode()
+        users[admin_email] = {"name": "Emilio Hafemann", "role": "Super Admin", "password_hash": hashed}
     st.session_state['users_db'] = users
     st.session_state['users_sha'] = sha
 
@@ -80,9 +73,7 @@ def login_page():
                 user = st.session_state['users_db'].get(u)
                 if user:
                     try:
-                        # Verificación Robustecida
-                        stored = user.get('password_hash', '')
-                        if bcrypt.checkpw(p.encode(), stored.encode()):
+                        if bcrypt.checkpw(p.encode(), user.get('password_hash','').encode()):
                             st.session_state['auth_status'] = True
                             st.session_state['current_user'] = u
                             st.session_state['current_role'] = user['role']
@@ -90,7 +81,7 @@ def login_page():
                             time.sleep(0.5)
                             st.rerun()
                         else: st.error("Credenciales inválidas")
-                    except Exception as e: st.error(f"Error de seguridad: {e}")
+                    except: st.error("Error de hash")
                 else: st.error("Credenciales inválidas")
 
 def logout():
@@ -147,7 +138,8 @@ def obtener_indicadores():
 TASAS = obtener_indicadores()
 
 TEXTOS = {
-    "ES": {"title": "Cotizador", "client": "Cliente", "proj": "Título del Proyecto", "add": "Agregar", "desc": "Descripción", 
+    "ES": {
+        "title": "Cotizador", "client": "Cliente", "proj": "Título del Proyecto", "add": "Agregar", "desc": "Descripción", 
         "qty": "Cant.", "unit": "Unitario", "total": "Total", "subtotal": "Subtotal", "fee": "Fee Admin (10%)", 
         "grand_total": "TOTAL A PAGAR", "invoice_to": "Facturar a:", "quote": "COTIZACIÓN", "date": "Fecha", 
         "validity": "Validez: 30 días", "save": "Guardar y Descargar", "download": "Descargar PDF", 
@@ -306,8 +298,6 @@ def modulo_cotizador():
     cl, ct = st.columns([1, 5]); idi = cl.selectbox("🌐", ["ES", "EN", "PT"]); txt = TEXTOS[idi]; ct.title(txt['title'])
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("UF (CL)", f"${TASAS['UF']:,.0f}"); k2.metric("USD (CL)", f"${TASAS['USD_CLP']:,.0f}"); k3.metric("USD (BR)", f"R$ {TASAS['USD_BRL']:.2f}")
-    if k4.button("Actualizar Tasas"): obtener_indicadores.clear(); st.rerun()
-    
     st.markdown("---")
     c1, c2 = st.columns([1, 2]); idx = TODOS_LOS_PAISES.index("Chile") if "Chile" in TODOS_LOS_PAISES else 0
     ps = c1.selectbox("🌎 País", TODOS_LOS_PAISES, index=idx); ctx = obtener_contexto(ps)
@@ -351,7 +341,7 @@ def modulo_cotizador():
             st.metric(txt['grand_total'],f"{mon} {fin:,.2f}")
             if st.button(txt['save'],type="primary"):
                 if not emp: st.error("Falta Empresa"); return
-                nid=f"TP-{random.randint(1000, 9999)}"; cli={'empresa':emp,'contacto':con,'email':ema}
+                nid=f"TP-{random.randint(1000,9999)}"; cli={'empresa':emp,'contacto':con,'email':ema}
                 ext={'fee':fee,'bank':bnk,'desc':dsc,'pais':ps,'id':nid}
                 
                 pdf = PDF() # INSTANCIA ÚNICA
@@ -425,30 +415,98 @@ def modulo_dashboard():
     if not df_s.empty:
         c2.plotly_chart(px.bar(df_s.groupby(['pais','moneda'])['total'].sum().reset_index(), x='pais', y='total', color='moneda'), use_container_width=True)
 
+# ==============================================================================
+# 4. MODULO ADMIN (MEJORADO)
+# ==============================================================================
 def modulo_admin():
-    st.title("👥 Usuarios"); st.write(f"Admin: {st.session_state['current_user']}")
-    with st.form("new_user"):
-        st.write("Crear Nuevo Usuario"); nu=st.text_input("Email"); np=st.text_input("Pass",type="password"); nr=st.selectbox("Rol",["Comercial","Finanzas","Super Admin"])
-        name = st.text_input("Nombre Completo")
-        if st.form_submit_button("Crear"):
-            hashed = bcrypt.hashpw(np.encode(), bcrypt.gensalt()).decode()
-            new_users = st.session_state['users_db'].copy()
-            new_users[nu] = {'pass': np, 'role': nr, 'name': name, 'password_hash': hashed}
-            if guardar_usuarios_github(new_users, st.session_state['users_sha']):
-                st.success(f"Creado: {nu}"); time.sleep(1); st.rerun()
-            else: st.error("Error al guardar en GitHub")
+    st.title("👥 Gestión de Usuarios")
+    st.info(f"Panel de control de: **{st.session_state['current_user']}**")
     
-    with st.expander("Cambiar mi Contraseña"):
-        with st.form("change_pass"):
-            p1=st.text_input("Nueva Contraseña",type="password"); p2=st.text_input("Confirmar",type="password")
-            if st.form_submit_button("Cambiar"):
-                if p1==p2 and p1:
-                    h = bcrypt.hashpw(p1.encode(), bcrypt.gensalt()).decode()
-                    usrs = st.session_state['users_db'].copy()
-                    usrs[st.session_state['current_user']]['password_hash'] = h
-                    if guardar_usuarios_github(usrs, st.session_state['users_sha']): st.success("Contraseña actualizada"); st.rerun()
-                else: st.error("No coinciden")
+    tab_list, tab_create, tab_edit, tab_pass = st.tabs(["📋 Listado", "➕ Crear Usuario", "✏️ Editar", "🔑 Resetear Clave"])
+    
+    # --- TAB 1: LISTADO ---
+    with tab_list:
+        # Convertir DB a DataFrame para visualización limpia
+        users_data = []
+        for email, data in st.session_state['users_db'].items():
+            users_data.append({
+                "Email (ID)": email,
+                "Nombre": data.get('name', 'Sin nombre'),
+                "Rol": data.get('role', 'N/A')
+            })
+        st.dataframe(pd.DataFrame(users_data), use_container_width=True)
 
+    # --- TAB 2: CREAR ---
+    with tab_create:
+        with st.form("create_user"):
+            col1, col2 = st.columns(2)
+            new_email = col1.text_input("Email Corporativo")
+            new_pass = col2.text_input("Contraseña Inicial", type="password")
+            new_name = col1.text_input("Nombre Completo")
+            new_role = col2.selectbox("Rol", ["Comercial", "Finanzas", "Super Admin"])
+            
+            if st.form_submit_button("Crear Usuario"):
+                if new_email in st.session_state['users_db']:
+                    st.error("El usuario ya existe.")
+                elif not new_email or not new_pass:
+                    st.error("Faltan datos obligatorios.")
+                else:
+                    hashed = bcrypt.hashpw(new_pass.encode(), bcrypt.gensalt()).decode()
+                    new_db = st.session_state['users_db'].copy()
+                    new_db[new_email] = {'name': new_name, 'role': new_role, 'password_hash': hashed}
+                    
+                    if guardar_usuarios_github(new_db, st.session_state['users_sha']):
+                        st.success(f"Usuario {new_email} creado exitosamente.")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("Error al guardar en la base de datos (GitHub).")
+
+    # --- TAB 3: EDITAR (Nombre y Rol) ---
+    with tab_edit:
+        # Selector de usuario
+        user_to_edit = st.selectbox("Seleccionar Usuario a Editar", list(st.session_state['users_db'].keys()))
+        
+        if user_to_edit:
+            current_data = st.session_state['users_db'][user_to_edit]
+            
+            with st.form("edit_user"):
+                edit_name = st.text_input("Nombre", value=current_data.get('name', ''))
+                edit_role = st.selectbox("Rol", ["Comercial", "Finanzas", "Super Admin"], index=["Comercial", "Finanzas", "Super Admin"].index(current_data.get('role', 'Comercial')))
+                
+                if st.form_submit_button("Guardar Cambios"):
+                    # Actualizar solo datos, mantener hash
+                    new_db = st.session_state['users_db'].copy()
+                    new_db[user_to_edit]['name'] = edit_name
+                    new_db[user_to_edit]['role'] = edit_role
+                    
+                    if guardar_usuarios_github(new_db, st.session_state['users_sha']):
+                        st.success("Datos actualizados.")
+                        time.sleep(1)
+                        st.rerun()
+
+    # --- TAB 4: RESET CLAVE ---
+    with tab_pass:
+        user_to_reset = st.selectbox("Usuario para Resetear Clave", list(st.session_state['users_db'].keys()), key="reset_select")
+        
+        if user_to_reset:
+            st.warning(f"Estás a punto de cambiar la contraseña de **{user_to_reset}**.")
+            new_pass_reset = st.text_input("Nueva Contraseña", type="password", key="new_pass_reset")
+            
+            if st.button("Cambiar Contraseña"):
+                if new_pass_reset:
+                    hashed = bcrypt.hashpw(new_pass_reset.encode(), bcrypt.gensalt()).decode()
+                    new_db = st.session_state['users_db'].copy()
+                    new_db[user_to_reset]['password_hash'] = hashed
+                    
+                    if guardar_usuarios_github(new_db, st.session_state['users_sha']):
+                        st.success("Contraseña restablecida correctamente.")
+                    else:
+                        st.error("Error de conexión.")
+                else:
+                    st.error("Escribe una contraseña.")
+
+# --- APP ---
 with st.sidebar:
     if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=130)
     role = st.session_state.get('current_role', 'Comercial')

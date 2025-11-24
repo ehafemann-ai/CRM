@@ -22,7 +22,7 @@ st.markdown("""<style>
 </style>""", unsafe_allow_html=True)
 
 # ==============================================================================
-# 1. GESTIÓN DE USUARIOS
+# 1. GESTIÓN DE USUARIOS (CON RECUPERACIÓN DE CONTRASEÑA)
 # ==============================================================================
 def cargar_usuarios_github():
     try:
@@ -31,27 +31,35 @@ def cargar_usuarios_github():
         if r.status_code == 200:
             content = base64.b64decode(r.json()['content']).decode('utf-8')
             return json.loads(content), r.json()['sha']
-        else:
-            hashed = bcrypt.hashpw("Max1234".encode(), bcrypt.gensalt()).decode()
-            return {"ehafemann@talentpro-latam.com": {"name": "Emilio H.", "role": "Super Admin", "password_hash": hashed}}, None
+        return {}, None
     except: return {}, None
 
 def guardar_usuarios_github(users_dict, sha):
     try:
         json_str = json.dumps(users_dict, indent=4)
         content_b64 = base64.b64encode(json_str.encode()).decode()
-        data = {"message": "Update users db", "content": content_b64, "sha": sha}
+        data = {"message": "Update users db", "content": content_b64}
+        if sha: data["sha"] = sha
         headers = {"Authorization": f"token {st.secrets['github']['token']}", "Accept": "application/vnd.github.v3+json"}
         r = requests.put(st.secrets['github']['url_usuarios'], headers=headers, json=data)
         return r.status_code in [200, 201]
     except: return False
 
+# INICIALIZAR Y FORZAR ADMIN
 if 'users_db' not in st.session_state:
     users, sha = cargar_usuarios_github()
+    
+    # --- LÓGICA DE RESCATE ---
+    # Forzamos que tu usuario SIEMPRE tenga la clave TalentPro_2025 en la sesión actual
+    # independientemente de lo que diga el archivo antiguo en GitHub.
     admin_email = "ehafemann@talentpro-latam.com"
-    if admin_email not in users:
-        hashed = bcrypt.hashpw("Max1234".encode(), bcrypt.gensalt()).decode()
-        users[admin_email] = {"name": "Emilio H.", "role": "Super Admin", "password_hash": hashed}
+    new_hash = bcrypt.hashpw("TalentPro_2025".encode(), bcrypt.gensalt()).decode()
+    
+    if admin_email in users:
+        users[admin_email]['password_hash'] = new_hash # Actualizamos el hash existente
+    else:
+        users[admin_email] = {"name": "Emilio Hafemann", "role": "Super Admin", "password_hash": new_hash}
+    
     st.session_state['users_db'] = users
     st.session_state['users_sha'] = sha
 
@@ -72,7 +80,9 @@ def login_page():
                 user = st.session_state['users_db'].get(u)
                 if user:
                     try:
-                        if bcrypt.checkpw(p.encode(), user.get('password_hash','').encode()):
+                        # Verificación Robustecida
+                        stored = user.get('password_hash', '')
+                        if bcrypt.checkpw(p.encode(), stored.encode()):
                             st.session_state['auth_status'] = True
                             st.session_state['current_user'] = u
                             st.session_state['current_role'] = user['role']
@@ -80,7 +90,7 @@ def login_page():
                             time.sleep(0.5)
                             st.rerun()
                         else: st.error("Credenciales inválidas")
-                    except: st.error("Error de hash")
+                    except Exception as e: st.error(f"Error de seguridad: {e}")
                 else: st.error("Credenciales inválidas")
 
 def logout():
@@ -124,36 +134,20 @@ data = cargar_datos_seguros()
 df_p_usd, df_s_usd, df_config, df_p_cl, df_s_cl, df_p_br, df_s_br = data
 TODOS_LOS_PAISES = sorted(df_config['Pais'].unique().tolist()) if not df_config.empty else ["Chile", "Brasil"]
 
-# --- APIS INDICADORES MEJORADAS ---
 @st.cache_data(ttl=3600)
 def obtener_indicadores():
-    # Valores por defecto (Offline)
-    t = {"UF": 38000, "USD_CLP": 980, "USD_BRL": 5.8, "status": "🔴 Offline"}
+    t = {"UF": 38000, "USD_CLP": 980, "USD_BRL": 5.8}
     try:
-        # Mindicador Chile (Timeout aumentado a 5 seg)
-        c = requests.get('https://mindicador.cl/api', timeout=5)
-        if c.status_code == 200:
-            data_cl = c.json()
-            t['UF'] = data_cl['uf']['valor']
-            t['USD_CLP'] = data_cl['dolar']['valor']
-            t['status'] = "🟢 Online"
-        
-        # Open Exchange Rates para BRL
-        b = requests.get('https://open.er-api.com/v6/latest/USD', timeout=5)
-        if b.status_code == 200:
-            data_br = b.json()
-            t['USD_BRL'] = data_br['rates']['BRL']
-            
-    except Exception as e:
-        print(f"API Error: {e}")
-        
+        c = requests.get('https://mindicador.cl/api', timeout=2).json()
+        t['UF'], t['USD_CLP'] = c['uf']['valor'], c['dolar']['valor']
+        b = requests.get('https://open.er-api.com/v6/latest/USD', timeout=2).json()
+        t['USD_BRL'] = b['rates']['BRL']
+    except: pass
     return t
-
 TASAS = obtener_indicadores()
 
 TEXTOS = {
-    "ES": {
-        "title": "Cotizador", "client": "Cliente", "proj": "Título del Proyecto", "add": "Agregar", "desc": "Descripción", 
+    "ES": {"title": "Cotizador", "client": "Cliente", "proj": "Título del Proyecto", "add": "Agregar", "desc": "Descripción", 
         "qty": "Cant.", "unit": "Unitario", "total": "Total", "subtotal": "Subtotal", "fee": "Fee Admin (10%)", 
         "grand_total": "TOTAL A PAGAR", "invoice_to": "Facturar a:", "quote": "COTIZACIÓN", "date": "Fecha", 
         "validity": "Validez: 30 días", "save": "Guardar y Descargar", "download": "Descargar PDF", 
@@ -310,18 +304,10 @@ def agregar_pagina_al_pdf(pdf, empresa, cliente, items, calc, lang, extras, titu
 
 def modulo_cotizador():
     cl, ct = st.columns([1, 5]); idi = cl.selectbox("🌐", ["ES", "EN", "PT"]); txt = TEXTOS[idi]; ct.title(txt['title'])
-    
-    # INDICADORES VISIBLES Y BOTÓN ACTUALIZAR
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("UF (CL)", f"${TASAS['UF']:,.0f}")
-    k2.metric("USD (CL)", f"${TASAS['USD_CLP']:,.0f}")
-    k3.metric("USD (BR)", f"R$ {TASAS['USD_BRL']:.2f}")
-    if k4.button("🔄 Actualizar Tasas"):
-        obtener_indicadores.clear()
-        st.rerun()
+    k1.metric("UF (CL)", f"${TASAS['UF']:,.0f}"); k2.metric("USD (CL)", f"${TASAS['USD_CLP']:,.0f}"); k3.metric("USD (BR)", f"R$ {TASAS['USD_BRL']:.2f}")
+    if k4.button("Actualizar Tasas"): obtener_indicadores.clear(); st.rerun()
     
-    st.caption(f"Estado API: {TASAS['status']}")
-
     st.markdown("---")
     c1, c2 = st.columns([1, 2]); idx = TODOS_LOS_PAISES.index("Chile") if "Chile" in TODOS_LOS_PAISES else 0
     ps = c1.selectbox("🌎 País", TODOS_LOS_PAISES, index=idx); ctx = obtener_contexto(ps)
@@ -336,7 +322,7 @@ def modulo_cotizador():
     
     st.markdown("---"); tp, ts = st.tabs([txt['sec_prod'], txt['sec_serv']])
     with tp:
-        c1,c2,c3,c4=st.columns([3, 1, 1, 1]); lp=ctx['dp']['Producto'].unique().tolist() if not ctx['dp'].empty else []
+        c1,c2,c3,c4=st.columns([3,1,1,1]); lp=ctx['dp']['Producto'].unique().tolist() if not ctx['dp'].empty else []
         if lp:
             sp=c1.selectbox("Item",lp,key="p1"); qp=c2.number_input(txt['qty'],1,10000,10,key="q1")
             up=calc_xls(ctx['dp'],sp,qp,ctx['tipo']=='Loc'); c3.metric(txt['unit'],f"{up:,.2f}")
@@ -365,7 +351,7 @@ def modulo_cotizador():
             st.metric(txt['grand_total'],f"{mon} {fin:,.2f}")
             if st.button(txt['save'],type="primary"):
                 if not emp: st.error("Falta Empresa"); return
-                nid=f"TP-{random.randint(1000,9999)}"; cli={'empresa':emp,'contacto':con,'email':ema}
+                nid=f"TP-{random.randint(1000, 9999)}"; cli={'empresa':emp,'contacto':con,'email':ema}
                 ext={'fee':fee,'bank':bnk,'desc':dsc,'pais':ps,'id':nid}
                 
                 pdf = PDF() # INSTANCIA ÚNICA

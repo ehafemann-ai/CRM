@@ -27,17 +27,26 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 1. SISTEMA DE AUTENTICACIÓN
+# 1. SISTEMA DE AUTENTICACIÓN (SEGURO SIN GOOGLE)
 # ==============================================================================
-SUPER_ADMIN_USER = "ehafemann@talentpro-latam.com"
-SUPER_ADMIN_PASS = "Max1234"
 
+# Intentar cargar credenciales desde Secrets
+try:
+    SUPER_ADMIN_USER = st.secrets["auth"]["admin_user"]
+    SUPER_ADMIN_PASS = st.secrets["auth"]["admin_pass"]
+except:
+    # Fallback de emergencia por si no se configuran los secrets aún
+    SUPER_ADMIN_USER = "admin"
+    SUPER_ADMIN_PASS = "admin"
+
+# Inicializar DB de usuarios en memoria
 if 'users_db' not in st.session_state:
-    st.session_state['users_db'] = {SUPER_ADMIN_USER: {'pass': SUPER_ADMIN_PASS, 'role': 'Super Admin', 'name': 'Emilio Hafemann'}}
+    st.session_state['users_db'] = {
+        SUPER_ADMIN_USER: {'pass': SUPER_ADMIN_PASS, 'role': 'Super Admin', 'name': 'Administrador'}
+    }
 else:
-    # Asegurar que la contraseña del admin sea la correcta siempre
-    if SUPER_ADMIN_USER in st.session_state['users_db']:
-        st.session_state['users_db'][SUPER_ADMIN_USER]['pass'] = SUPER_ADMIN_PASS
+    # Asegurar que el admin siempre esté actualizado con los secrets
+    st.session_state['users_db'][SUPER_ADMIN_USER] = {'pass': SUPER_ADMIN_PASS, 'role': 'Super Admin', 'name': 'Administrador'}
 
 if 'auth_status' not in st.session_state: st.session_state['auth_status'] = False
 if 'current_user' not in st.session_state: st.session_state['current_user'] = None
@@ -47,44 +56,55 @@ def login_page():
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
         st.markdown("<br><br>", unsafe_allow_html=True)
-        st.image("https://bukwebapp-enterprise-chile.s3.amazonaws.com/talentpro/generals/logo_login/logo_login.jpg", width=300)
-        st.markdown("### Acceso Corporativo Seguro")
+        # Intentar mostrar logo si existe, sino texto
+        if os.path.exists("logo_talentpro.jpg"):
+            st.image("logo_talentpro.jpg", width=300)
+        else:
+            st.markdown("## TalentPro ERP")
+            
+        st.markdown("### Acceso Corporativo")
+        
         with st.form("login_form"):
-            username = st.text_input("Usuario / Email")
+            username = st.text_input("Usuario")
             password = st.text_input("Contraseña", type="password")
-            if st.form_submit_button("Iniciar Sesión", use_container_width=True):
-                user_data = st.session_state['users_db'].get(username)
-                if user_data and user_data.get('pass') == password:
+            submit = st.form_submit_button("Ingresar", use_container_width=True)
+            
+            if submit:
+                user = st.session_state['users_db'].get(username)
+                if user and user['pass'] == password:
                     st.session_state['auth_status'] = True
                     st.session_state['current_user'] = username
-                    st.session_state['current_role'] = user_data.get('role', 'Comercial')
-                    st.success("¡Bienvenido!")
+                    st.session_state['current_role'] = user['role']
+                    st.success("Acceso concedido")
                     time.sleep(0.5)
                     st.rerun()
                 else:
-                    st.error("Credenciales inválidas.")
+                    st.error("Credenciales inválidas")
 
 def logout():
-    st.session_state['auth_status'] = False; st.session_state['current_user'] = None; st.session_state['current_role'] = None; st.rerun()
-
-if not st.session_state['auth_status']: login_page(); st.stop()
+    st.session_state['auth_status'] = False
+    st.session_state['current_user'] = None
+    st.session_state['current_role'] = None
+    st.rerun()
 
 # ==============================================================================
-# 2. CARGA DE DATOS SEGURA (DESDE REPO PRIVADO)
+# 2. RECURSOS Y CARGA DE DATOS
 # ==============================================================================
 LOGO_PATH = "logo_talentpro.jpg"
-
 @st.cache_resource
 def descargar_logo():
     if not os.path.exists(LOGO_PATH):
         try:
             r = requests.get("https://bukwebapp-enterprise-chile.s3.amazonaws.com/talentpro/generals/logo_login/logo_login.jpg")
-            # CORRECCIÓN AQUÍ: Separado en líneas distintas
-            if r.status_code == 200:
-                with open(LOGO_PATH, 'wb') as f:
-                    f.write(r.content)
+            if r.status_code == 200: 
+                with open(LOGO_PATH, 'wb') as f: f.write(r.content)
         except: pass
 descargar_logo()
+
+# BLOQUEO DE SEGURIDAD (Después de descargar logo para que se vea en login)
+if not st.session_state['auth_status']:
+    login_page()
+    st.stop()
 
 @st.cache_data(ttl=60)
 def cargar_datos_seguros():
@@ -126,11 +146,7 @@ def cargar_datos_seguros():
         st.error(f"Error crítico de datos: {e}")
         st.stop()
 
-# Cargar Datos
 data = cargar_datos_seguros()
-if data is None:
-    st.stop()
-
 df_p_usd, df_s_usd, df_config, df_p_cl, df_s_cl, df_p_br, df_s_br = data
 TODOS_LOS_PAISES = sorted(df_config['Pais'].unique().tolist()) if not df_config.empty else ["Chile", "Brasil"]
 
@@ -160,8 +176,7 @@ EMPRESAS = {
     "Latam": {"Nombre": "TALENTPRO LATAM, S.A.", "ID": "RUC: 155723672-2", "Dir": "CALLE 50, GLOBAL PLAZA, PANAMÁ", "Giro": "Talent Services"}
 }
 
-if 'cotizaciones' not in st.session_state: 
-    st.session_state['cotizaciones'] = pd.DataFrame(columns=['id', 'fecha', 'empresa', 'pais', 'total', 'moneda', 'estado', 'vendedor'])
+if 'cotizaciones' not in st.session_state: st.session_state['cotizaciones'] = pd.DataFrame(columns=['id', 'fecha', 'empresa', 'pais', 'total', 'moneda', 'estado', 'vendedor'])
 if 'carrito' not in st.session_state: st.session_state['carrito'] = []
 
 # --- FUNCIONES CORE ---
@@ -251,7 +266,7 @@ def generar_pdf_final(emp, cli, items, calc, lang, extras, tit):
     return pdf.output(dest='S').encode('latin-1')
 
 # ==============================================================================
-# 3. VISTAS
+# 3. MÓDULOS (VISTAS)
 # ==============================================================================
 
 def modulo_cotizador():
@@ -355,7 +370,7 @@ def modulo_finanzas():
     st.write("Histórico:"); st.dataframe(df[df['estado']=='Facturada'])
 
 def modulo_dashboard():
-    st.title("📊 Dashboards"); df=st.session_state['cotizaciones']
+    st.title("📊 Dash"); df=st.session_state['cotizaciones']
     if df.empty: return
     c1,c2=st.columns(2)
     res=df['estado'].value_counts().reset_index(); res.columns=['Estado','Cant']

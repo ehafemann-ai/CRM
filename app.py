@@ -6,7 +6,7 @@ import os
 import io
 import json
 import base64
-import bcrypt  # LIBRERÍA DE SEGURIDAD
+import bcrypt
 from datetime import datetime
 from fpdf import FPDF
 import plotly.express as px
@@ -22,11 +22,10 @@ st.markdown("""<style>
 </style>""", unsafe_allow_html=True)
 
 # ==============================================================================
-# 1. GESTIÓN DE USUARIOS SEGURA (GITHUB + BCRYPT)
+# 1. GESTIÓN DE USUARIOS (GITHUB + BCRYPT)
 # ==============================================================================
 
 def cargar_usuarios_github():
-    """Descarga y desencripta la base de usuarios"""
     try:
         headers = {"Authorization": f"token {st.secrets['github']['token']}", "Accept": "application/vnd.github.v3+json"}
         r = requests.get(st.secrets['github']['url_usuarios'], headers=headers)
@@ -34,13 +33,12 @@ def cargar_usuarios_github():
             content = base64.b64decode(r.json()['content']).decode('utf-8')
             return json.loads(content), r.json()['sha']
         else:
-            # Si falla, retorna usuario default en memoria (solo emergencia)
+            # Fallback solo para inicializar
             hashed = bcrypt.hashpw("Max1234".encode(), bcrypt.gensalt()).decode()
             return {"ehafemann@talentpro-latam.com": {"name": "Emilio H.", "role": "Super Admin", "password_hash": hashed}}, None
     except: return {}, None
 
 def guardar_usuarios_github(users_dict, sha):
-    """Sube la base de usuarios encriptada a GitHub"""
     try:
         json_str = json.dumps(users_dict, indent=4)
         content_b64 = base64.b64encode(json_str.encode()).decode()
@@ -50,15 +48,12 @@ def guardar_usuarios_github(users_dict, sha):
         return r.status_code in [200, 201]
     except: return False
 
-# Inicializar Estado
 if 'users_db' not in st.session_state:
     users, sha = cargar_usuarios_github()
-    # Autocorrección: Si el admin no tiene hash (primera vez), crearlo
     admin_email = "ehafemann@talentpro-latam.com"
     if admin_email not in users:
         hashed = bcrypt.hashpw("Max1234".encode(), bcrypt.gensalt()).decode()
         users[admin_email] = {"name": "Emilio H.", "role": "Super Admin", "password_hash": hashed}
-    
     st.session_state['users_db'] = users
     st.session_state['users_sha'] = sha
 
@@ -78,16 +73,17 @@ def login_page():
             if st.form_submit_button("Entrar", use_container_width=True):
                 user = st.session_state['users_db'].get(u)
                 if user:
-                    # VERIFICACIÓN DE HASH
                     stored_hash = user.get('password_hash', '')
                     try:
                         if bcrypt.checkpw(p.encode(), stored_hash.encode()):
                             st.session_state['auth_status'] = True
                             st.session_state['current_user'] = u
                             st.session_state['current_role'] = user['role']
-                            st.success("¡Bienvenido!"); time.sleep(0.5); st.rerun()
+                            st.success("¡Bienvenido!")
+                            time.sleep(0.5)
+                            st.rerun()
                         else: st.error("Credenciales inválidas")
-                    except: st.error("Error de seguridad en cuenta. Contacte soporte.")
+                    except: st.error("Error de hash. Contacte soporte.")
                 else: st.error("Credenciales inválidas")
 
 def logout():
@@ -103,7 +99,9 @@ def descargar_logo():
     if not os.path.exists(LOGO_PATH):
         try:
             r = requests.get("https://bukwebapp-enterprise-chile.s3.amazonaws.com/talentpro/generals/logo_login/logo_login.jpg")
-            if r.status_code == 200: with open(LOGO_PATH, 'wb') as f: f.write(r.content)
+            if r.status_code == 200: 
+                with open(LOGO_PATH, 'wb') as f:
+                    f.write(r.content)
         except: pass
 descargar_logo()
 
@@ -142,7 +140,6 @@ def obtener_indicadores():
     return t
 TASAS = obtener_indicadores()
 
-# --- TEXTOS ---
 TEXTOS = {
     "ES": {"title": "Cotizador", "client": "Cliente", "add": "Agregar", "desc": "Descripción", "qty": "Cant.", "unit": "Unitario", "total": "Total", "subtotal": "Subtotal", "fee": "Fee Admin (10%)", "grand_total": "TOTAL", "invoice_to": "Facturar a:", "quote": "COTIZACIÓN", "date": "Fecha", "validity": "Validez: 30 días", "save": "Guardar y Enviar", "download": "Descargar PDF", "sec_prod": "Licencias", "sec_serv": "Servicios", "discount": "Descuento", "tax": "Impuestos", "legal_intl": "Facturación a {pais}. Sumar impuestos retenidos y gastos OUR.", "noshow_title": "Política No-Show:", "noshow_text": "Multa 50% por inasistencia sin aviso 24h."},
     "EN": {"title": "Quote Tool", "client": "Client", "add": "Add", "desc": "Description", "qty": "Qty", "unit": "Price", "total": "Total", "subtotal": "Subtotal", "fee": "Admin Fee", "grand_total": "TOTAL", "invoice_to": "Bill to:", "quote": "QUOTATION", "date": "Date", "validity": "Valid: 30 days", "save": "Save & Send", "download": "Download PDF", "sec_prod": "Licenses", "sec_serv": "Services", "discount": "Discount", "tax": "Taxes", "legal_intl": "Billing to {pais}. Add withholding taxes and OUR bank fees.", "noshow_title": "No-Show Policy:", "noshow_text": "50% fee for absence without 24h notice."},
@@ -159,7 +156,6 @@ EMPRESAS = {
 if 'cotizaciones' not in st.session_state: st.session_state['cotizaciones'] = pd.DataFrame(columns=['id', 'fecha', 'empresa', 'pais', 'total', 'moneda', 'estado', 'vendedor'])
 if 'carrito' not in st.session_state: st.session_state['carrito'] = []
 
-# --- FUNCIONES NEGOCIO ---
 def obtener_contexto(pais):
     if pais == "Chile": return {"mon": "UF", "dp": df_p_cl, "ds": df_s_cl, "tipo": "Loc"}
     if pais in ["Brasil", "Brazil"]: return {"mon": "R$", "dp": df_p_br, "ds": df_s_br, "tipo": "Loc"}
@@ -244,19 +240,17 @@ def generar_pdf_final(emp, cli, items, calc, lang, extras, tit):
     pdf.set_text_color(100); pdf.cell(0,5,t['validity'],0,1)
     return pdf.output(dest='S').encode('latin-1')
 
-# --- MÓDULOS ---
+# --- UI ---
 def modulo_cotizador():
     cl, ct = st.columns([1,5]); idi = cl.selectbox("🌐", ["ES","EN","PT"]); txt = TEXTOS[idi]; ct.title(txt['title'])
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("UF", f"${TASAS['UF']:,.0f}"); k2.metric("USD", f"${TASAS['USD_CLP']:,.0f}"); k3.metric("BRL", f"{TASAS['USD_BRL']:.2f}")
+    k1.metric("UF (CL)", f"${TASAS['UF']:,.0f}"); k2.metric("USD (CL)", f"${TASAS['USD_CLP']:,.0f}"); k3.metric("USD (BR)", f"R$ {TASAS['USD_BRL']:.2f}")
     st.markdown("---")
     c1, c2 = st.columns([1,2]); idx = TODOS_LOS_PAISES.index("Chile") if "Chile" in TODOS_LOS_PAISES else 0
     ps = c1.selectbox("🌎 País", TODOS_LOS_PAISES, index=idx); ctx = obtener_contexto(ps)
     c2.info(f"Moneda: **{ctx['mon']}** | Tarifas: **{ctx['tipo']}** {ctx.get('niv','')}")
-    
     st.markdown("---"); cc1,cc2,cc3,cc4=st.columns(4)
     emp=cc1.text_input(txt['client']); con=cc2.text_input("Contacto"); ema=cc3.text_input("Email"); ven=cc4.selectbox("Ejecutivo",["Comercial 1","Comercial 2"])
-    
     st.markdown("---"); tp, ts = st.tabs([txt['sec_prod'], txt['sec_serv']])
     with tp:
         c1,c2,c3,c4=st.columns([3,1,1,1]); lp=ctx['dp']['Producto'].unique().tolist() if not ctx['dp'].empty else []
@@ -284,7 +278,6 @@ def modulo_cotizador():
         if len(dfc['Moneda'].unique())>1: st.error("Error: Monedas mezcladas"); return
         mon=dfc['Moneda'].unique()[0]; st.dataframe(dfc[['Desc','Det','Unit','Total']],use_container_width=True)
         sub=dfc['Total'].sum(); eva=dfc[dfc['Ítem']=='Evaluación']['Total'].sum()
-        
         cL, cR = st.columns([3,1])
         with cR:
             fee=st.checkbox(txt['fee'],False); bnk=st.number_input("Bank Fee",0.0,value=30.0 if mon=="US$" else 0.0); dsc=st.number_input(txt['discount'],0.0)
@@ -295,7 +288,6 @@ def modulo_cotizador():
                 nid=f"TP-{random.randint(1000,9999)}"; cli={'empresa':emp,'contacto':con,'email':ema}
                 ext={'fee':fee,'bank':bnk,'desc':dsc,'pais':ps,'id':nid}
                 pdf_b=None
-                
                 pr, sv = [x for x in st.session_state['carrito'] if x['Ítem']=='Evaluación'], [x for x in st.session_state['carrito'] if x['Ítem']=='Servicio']
                 if ps=="Chile" and pr and sv:
                     ex2=ext.copy(); ex2['fee']=False
@@ -305,7 +297,6 @@ def modulo_cotizador():
                     ent=get_empresa(ps,st.session_state['carrito'])
                     calc={'subtotal':sub,'fee':vfee,'tax_name':tn,'tax_val':tv,'total':fin}
                     pdf_b = generar_pdf_final(ent,cli,st.session_state['carrito'],calc,idi,ext,txt['quote'])
-                
                 b64=base64.b64encode(pdf_b).decode('latin-1')
                 st.markdown(f'<a href="data:application/pdf;base64,{b64}" download="Cot_{nid}.pdf" class="stButton">{txt["download"]}</a>',unsafe_allow_html=True)
                 st.session_state['cotizaciones']=pd.concat([st.session_state['cotizaciones'], pd.DataFrame([{
@@ -375,7 +366,6 @@ def modulo_admin():
                     if guardar_usuarios_github(usrs, st.session_state['users_sha']): st.success("Contraseña actualizada"); st.rerun()
                 else: st.error("No coinciden")
 
-# --- MENU ---
 with st.sidebar:
     if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=130)
     role = st.session_state.get('current_role', 'Comercial')

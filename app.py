@@ -90,9 +90,8 @@ def calcular_paa(cantidad, moneda_destino):
     else: base_usd = 1100
     
     if moneda_destino == "US$":
-        return base_usd, f"Tramo USD: ${base_usd}"
+        return base_usd, f"Tramo PAA (USD): ${base_usd}"
     elif moneda_destino == "UF":
-        # (USD * Dolar) / UF
         valor_clp = base_usd * TASAS_DIA['USD_CLP']
         valor_uf = valor_clp / TASAS_DIA['UF']
         return valor_uf, f"(USD {base_usd} * ${TASAS_DIA['USD_CLP']}) / UF"
@@ -122,7 +121,6 @@ def calcular_prueba_excel(df, producto, cantidad, es_local):
 
 def calcular_servicio(df, servicio, rol, contexto):
     if df.empty: return 0.0
-    
     if contexto['tipo'] == "Internacional":
         fila = df[(df['Servicio'] == servicio) & (df['Nivel'] == contexto['nivel'])]
     else:
@@ -144,7 +142,7 @@ def cotizador():
         k2.success(f"UF: ${TASAS_DIA['UF']:,.0f}")
         k3.success(f"Real: {TASAS_DIA['USD_BRL']:.2f}")
     else:
-        st.warning("⚠️ API Offline (Usando valores ref)")
+        st.warning("⚠️ API Offline")
 
     st.markdown("---")
 
@@ -173,37 +171,29 @@ def cotizador():
     st.markdown("---")
     st.subheader("2. Selección")
     
-    tab_p, tab_s = st.tabs(["🧩 Pruebas & PAA", "💼 Servicios (Consultoría)"])
+    tab_p, tab_s = st.tabs(["🧩 Pruebas", "💼 Servicios"])
 
-    # --- PESTAÑA PRUEBAS ---
+    # --- PESTAÑA PRUEBAS (Solo Excel) ---
     with tab_p:
         cp1, cp2, cp3, cp4 = st.columns([3, 1, 1, 1])
         
-        lista_excel = ctx['df_pruebas']['Producto'].unique().tolist() if not ctx['df_pruebas'].empty else []
-        lista_completa = ["Certificación PAA (Transversal)"] + lista_excel
+        # Ya no agregamos PAA aquí, solo lo del Excel de pruebas
+        lista_pruebas = ctx['df_pruebas']['Producto'].unique().tolist() if not ctx['df_pruebas'].empty else []
         
-        if lista_completa:
-            sel_p = cp1.selectbox("Producto", lista_completa)
-            cant_p = cp2.number_input("Cantidad", 1, 10000, 10)
+        if lista_pruebas:
+            sel_p = cp1.selectbox("Producto", lista_pruebas)
+            cant_p = cp2.number_input("Cantidad Evaluaciones", 1, 10000, 10)
             
-            # CALCULO
-            nota = ""
-            tipo_item_interno = "Evaluación" # Por defecto paga fee
-            
-            if sel_p == "Certificación PAA (Transversal)":
-                unit_p, nota = calcular_paa(cant_p, moneda)
-                tipo_item_interno = "Servicio" # PAA NO PAGA FEE (Regla solicitada)
-            else:
-                es_local = (ctx['tipo'] == 'Local')
-                unit_p = calcular_prueba_excel(ctx['df_pruebas'], sel_p, cant_p, es_local)
-                if es_local: nota = "Tramo Local (inicia en 50)"
+            es_local = (ctx['tipo'] == 'Local')
+            unit_p = calcular_prueba_excel(ctx['df_pruebas'], sel_p, cant_p, es_local)
+            nota = "Tramo Local (inicia en 50)" if es_local else ""
             
             cp3.metric(f"Unitario ({moneda})", f"{unit_p:,.2f}")
             if nota: cp3.caption(nota)
             
             if cp4.button("Agregar", key="add_p"):
                 st.session_state['carrito'].append({
-                    "Ítem": tipo_item_interno, # Aquí se define si paga fee o no
+                    "Ítem": "Evaluación", # Paga Fee
                     "Desc": sel_p, 
                     "Det": f"x{cant_p}",
                     "Moneda": moneda, 
@@ -212,26 +202,48 @@ def cotizador():
                 })
                 st.rerun()
 
-    # --- PESTAÑA SERVICIOS ---
+    # --- PESTAÑA SERVICIOS (Incluye PAA) ---
     with tab_s:
         cs1, cs2, cs3, cs4 = st.columns([3, 2, 1, 1])
-        lista_servicios = ctx['df_servicios']['Servicio'].unique().tolist() if not ctx['df_servicios'].empty else []
         
-        if lista_servicios:
-            sel_s = cs1.selectbox("Servicio", lista_servicios)
-            c_rol, c_cant = cs2.columns(2)
-            rol = c_rol.selectbox("Rol", ROLES)
-            # CAMBIO: AHORA DICE "CANTIDAD" EN LUGAR DE "HORAS"
-            cantidad_s = c_cant.number_input("Cantidad", 1, 1000, 1)
+        lista_servicios_excel = ctx['df_servicios']['Servicio'].unique().tolist() if not ctx['df_servicios'].empty else []
+        # AGREGAMOS PAA AQUÍ MANUALMENTE
+        lista_completa_servicios = ["Certificación PAA (Transversal)"] + lista_servicios_excel
+        
+        if lista_completa_servicios:
+            sel_s = cs1.selectbox("Servicio", lista_completa_servicios)
             
-            unit_s = calcular_servicio(ctx['df_servicios'], sel_s, rol, ctx)
-            
-            cs3.metric(f"Tarifa ({moneda})", f"{unit_s:,.2f}")
+            # LÓGICA DINÁMICA DE INTERFAZ
+            if sel_s == "Certificación PAA (Transversal)":
+                # Si es PAA, no mostramos Rol, solo Cantidad
+                c_rol, c_cant = cs2.columns([1, 30]) # Hack visual para ocultar Rol
+                c_rol.write("") # Espacio vacío
+                cantidad_s = cs2.number_input("Cantidad Personas", 1, 1000, 1)
+                
+                unit_s, nota_paa = calcular_paa(cantidad_s, moneda)
+                det_txt = f"{cantidad_s} personas"
+                rol_txt = "Transversal"
+                
+                cs3.metric(f"Unitario ({moneda})", f"{unit_s:,.2f}")
+                cs3.caption(nota_paa)
+                
+            else:
+                # Servicio normal del Excel
+                c_rol, c_cant = cs2.columns(2)
+                rol = c_rol.selectbox("Rol", ROLES)
+                cantidad_s = c_cant.number_input("Cantidad", 1, 1000, 1)
+                
+                unit_s = calcular_servicio(ctx['df_servicios'], sel_s, rol, ctx)
+                det_txt = f"{rol} ({cantidad_s})"
+                rol_txt = rol
+                
+                cs3.metric(f"Tarifa ({moneda})", f"{unit_s:,.2f}")
+
             if cs4.button("Agregar", key="add_s"):
                 st.session_state['carrito'].append({
-                    "Ítem": "Servicio", 
+                    "Ítem": "Servicio", # No paga Fee
                     "Desc": sel_s, 
-                    "Det": f"{rol} ({cantidad_s})",
+                    "Det": det_txt,
                     "Moneda": moneda, 
                     "Unit": unit_s, 
                     "Total": unit_s * cantidad_s
@@ -252,8 +264,7 @@ def cotizador():
             
             subtotal = df_c['Total'].sum()
             
-            # FILTRO CRUCIAL: EL FEE SOLO SE APLICA SI EL ÍTEM ES "Evaluación"
-            # Como PAA ahora se guarda como "Servicio", queda excluida.
+            # FILTRO: FEE SOLO A EVALUACIONES (PAA ES SERVICIO, ASI QUE NO ENTRA)
             tot_eval = df_c[df_c['Ítem'] == 'Evaluación']['Total'].sum()
             
             c_f1, c_f2 = st.columns([3, 1])

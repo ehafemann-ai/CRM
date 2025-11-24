@@ -15,34 +15,34 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 1. OBTENER INDICADORES ECONÓMICOS (EN VIVO) ---
-@st.cache_data(ttl=3600) # Se actualiza cada 1 hora
+# --- 1. OBTENER INDICADORES (API) ---
+@st.cache_data(ttl=3600)
 def obtener_indicadores():
-    tasas = {"UF": 38000, "USD_CLP": 950, "USD_BRL": 5.5, "Status": "Offline"} # Valores defecto
+    tasas = {"UF": 38000, "USD_CLP": 980, "USD_BRL": 5.8, "Status": "Offline"}
     try:
-        # Chile (Mindicador.cl)
+        # Chile
         resp_cl = requests.get('https://mindicador.cl/api').json()
         tasas['UF'] = resp_cl['uf']['valor']
         tasas['USD_CLP'] = resp_cl['dolar']['valor']
-        
-        # Brasil (Open Exchange Rates)
+        # Brasil
         resp_br = requests.get('https://open.er-api.com/v6/latest/USD').json()
         tasas['USD_BRL'] = resp_br['rates']['BRL']
-        
         tasas['Status'] = "Online"
     except:
-        pass # Si falla, usa los valores por defecto
+        pass
     return tasas
 
 TASAS_DIA = obtener_indicadores()
 
-# --- 2. CARGAR EXCEL ---
+# --- 2. CARGAR EXCEL (CON TUS NOMBRES EXACTOS) ---
 @st.cache_data(ttl=60)
 def cargar_datos():
     try:
         xls = pd.ExcelFile('precios.xlsx')
-        df_p_usd = pd.read_excel(xls, 'Pruebas')
-        df_s_usd = pd.read_excel(xls, 'Servicios')
+        
+        # AQUI ESTA EL CAMBIO DE NOMBRES DE PESTAÑAS
+        df_p_usd = pd.read_excel(xls, 'Pruebas Int')     # Antes 'Pruebas'
+        df_s_usd = pd.read_excel(xls, 'Servicios Int')   # Antes 'Servicios'
         df_config = pd.read_excel(xls, 'Config')
         
         try: df_p_cl = pd.read_excel(xls, 'Pruebas_CL')
@@ -60,7 +60,7 @@ def cargar_datos():
 
 data = cargar_datos()
 if data[0] is None:
-    st.error("⚠️ Falta 'precios.xlsx' en GitHub.")
+    st.error("⚠️ Error: No encuentro 'precios.xlsx' en GitHub.")
     st.stop()
 
 df_p_usd, df_s_usd, df_config, df_p_cl, df_s_cl, df_p_br, df_s_br = data
@@ -82,54 +82,57 @@ def obtener_contexto_pais(pais):
         nivel = df_config[df_config['Pais'] == pais].iloc[0]['Nivel'] if not df_config[df_config['Pais'] == pais].empty else "Medio"
         return {"moneda": "US$", "df_pruebas": df_p_usd, "df_servicios": df_s_usd, "tipo": "Internacional", "nivel": nivel}
 
-# --- CÁLCULOS ESPECIALES (PAA Y EXCEL) ---
+# --- CÁLCULOS ---
 
 def calcular_paa(cantidad, moneda_destino):
-    """
-    Lógica Transversal:
-    1-2: US$1.500
-    3-5: US$1.200
-    6+:  US$1.100
-    """
-    # 1. Determinar precio base en USD
+    # Lógica: 1-2: $1500, 3-5: $1200, 6+: $1100 (Base USD)
     if cantidad <= 2: base_usd = 1500
     elif cantidad <= 5: base_usd = 1200
     else: base_usd = 1100
     
-    # 2. Convertir según moneda del país
     if moneda_destino == "US$":
         return base_usd, f"Tramo USD: ${base_usd}"
-        
     elif moneda_destino == "UF":
-        # Fórmula: (USD * Valor Dolar CLP) / Valor UF
+        # (USD * Dolar) / UF
         valor_clp = base_usd * TASAS_DIA['USD_CLP']
         valor_uf = valor_clp / TASAS_DIA['UF']
-        return valor_uf, f"(USD {base_usd} * ${TASAS_DIA['USD_CLP']}) / UF {TASAS_DIA['UF']}"
-        
+        return valor_uf, f"(USD {base_usd} * ${TASAS_DIA['USD_CLP']}) / UF"
     elif moneda_destino == "R$":
         valor_brl = base_usd * TASAS_DIA['USD_BRL']
-        return valor_brl, f"USD {base_usd} * {TASAS_DIA['USD_BRL']:.2f} BRL/USD"
-    
+        return valor_brl, f"USD {base_usd} * {TASAS_DIA['USD_BRL']:.2f}"
     return 0.0, "Error"
 
-def calcular_prueba_excel(df, producto, cantidad):
+def calcular_prueba_excel(df, producto, cantidad, es_local):
     if df.empty: return 0.0
     fila = df[df['Producto'] == producto]
     if fila.empty: return 0.0
-    tramos = [100, 200, 300, 500, 1000, 'Infinito']
+    
+    # AQUÍ ESTÁ EL CAMBIO DE LOS 50
+    if es_local:
+        # Chile y Brasil parten en 50
+        tramos = [50, 100, 200, 300, 500, 1000, 'Infinito']
+    else:
+        # Internacional parte en 100
+        tramos = [100, 200, 300, 500, 1000, 'Infinito']
+    
     for tramo in tramos:
         limite = float('inf') if tramo == 'Infinito' else tramo
         if cantidad <= limite:
+            # Busca la columna (convierte a string o int para coincidir con excel)
             try: return float(fila.iloc[0][tramo])
-            except: return 0.0
+            except: 
+                try: return float(fila.iloc[0][str(tramo)]) # Intenta como texto
+                except: return 0.0
     return 0.0
 
 def calcular_servicio(df, servicio, rol, contexto):
     if df.empty: return 0.0
+    
     if contexto['tipo'] == "Internacional":
         fila = df[(df['Servicio'] == servicio) & (df['Nivel'] == contexto['nivel'])]
     else:
         fila = df[df['Servicio'] == servicio]
+
     if fila.empty: return 0.0
     try: return float(fila.iloc[0][rol])
     except: return 0.0
@@ -137,31 +140,29 @@ def calcular_servicio(df, servicio, rol, contexto):
 # --- PANTALLAS ---
 
 def cotizador():
-    st.title("📝 Cotizador Inteligente")
+    st.title("📝 Cotizador TalentPro")
     
-    # INDICADORES ENCABEZADO
+    # INDICADORES
     k1, k2, k3, k4 = st.columns(4)
     if TASAS_DIA['Status'] == "Online":
-        k1.success(f"Dólar (CL): ${TASAS_DIA['USD_CLP']:,.0f}")
-        k2.success(f"UF (Hoy): ${TASAS_DIA['UF']:,.0f}")
-        k3.success(f"USD->BRL: {TASAS_DIA['USD_BRL']:.2f}")
+        k1.success(f"Dólar: ${TASAS_DIA['USD_CLP']:,.0f}")
+        k2.success(f"UF: ${TASAS_DIA['UF']:,.0f}")
+        k3.success(f"Real: {TASAS_DIA['USD_BRL']:.2f}")
     else:
-        st.warning("⚠️ Usando tasas por defecto (API Offline)")
+        st.warning("⚠️ API Offline (Usando valores ref)")
 
     st.markdown("---")
 
     # 1. PAÍS
     with st.container():
-        st.subheader("1. Configuración")
         c1, c2 = st.columns([1, 2])
         idx_cl = LISTA_PAISES.index("Chile") if "Chile" in LISTA_PAISES else 0
         pais_sel = c1.selectbox("🌎 País", LISTA_PAISES, index=idx_cl)
         
         ctx = obtener_contexto_pais(pais_sel)
         moneda = ctx['moneda']
-        
         msg = f"Moneda: **{moneda}**"
-        if ctx['tipo'] == "Internacional": msg += f" | Nivel: **{ctx['nivel']}**"
+        if ctx['tipo'] == "Internacional": msg += f" | Tarifa: **{ctx['nivel']}**"
         c2.info(msg)
 
     # 2. CLIENTE
@@ -177,36 +178,37 @@ def cotizador():
     st.markdown("---")
     st.subheader("2. Selección")
     
-    tab_p, tab_s = st.tabs(["🧩 Pruebas & PAA", "💼 Servicios"])
+    tab_p, tab_s = st.tabs(["🧩 Pruebas", "💼 Servicios"])
 
-    # --- PESTAÑA PRUEBAS + PAA ---
+    # --- PESTAÑA PRUEBAS ---
     with tab_p:
         cp1, cp2, cp3, cp4 = st.columns([3, 1, 1, 1])
         
-        # Mezclamos Excel + PAA
         lista_excel = ctx['df_pruebas']['Producto'].unique().tolist() if not ctx['df_pruebas'].empty else []
-        # Agregamos PAA manualmente a la lista
         lista_completa = ["Certificación PAA (Transversal)"] + lista_excel
         
-        sel_p = cp1.selectbox("Producto", lista_completa)
-        cant_p = cp2.number_input("Cantidad", 1, 10000, 1) # PAA puede ser 1
-        
-        # LÓGICA DE CALCULO
-        nota_calc = ""
-        if sel_p == "Certificación PAA (Transversal)":
-            unit_p, nota_calc = calcular_paa(cant_p, moneda)
-        else:
-            unit_p = calcular_prueba_excel(ctx['df_pruebas'], sel_p, cant_p)
+        if lista_completa:
+            sel_p = cp1.selectbox("Producto", lista_completa)
+            cant_p = cp2.number_input("Cantidad", 1, 10000, 10)
             
-        cp3.metric(f"Unitario ({moneda})", f"{unit_p:,.2f}")
-        if nota_calc: st.caption(f"Cálculo: {nota_calc}")
-        
-        if cp4.button("Agregar", key="add_p"):
-            st.session_state['carrito'].append({
-                "Ítem": "Evaluación", "Desc": sel_p, "Det": f"x{cant_p}",
-                "Moneda": moneda, "Unit": unit_p, "Total": unit_p * cant_p
-            })
-            st.rerun()
+           # CALCULO
+            nota = ""
+            if sel_p == "Certificación PAA (Transversal)":
+                unit_p, nota = calcular_paa(cant_p, moneda)
+            else:
+                es_local = (ctx['tipo'] == 'Local')
+                unit_p = calcular_prueba_excel(ctx['df_pruebas'], sel_p, cant_p, es_local)
+                if es_local: nota = "Tramo Local (inicia en 50)"
+            
+            cp3.metric(f"Unitario ({moneda})", f"{unit_p:,.2f}")
+            if nota: cp3.caption(nota)
+            
+            if cp4.button("Agregar", key="add_p"):
+                st.session_state['carrito'].append({
+                    "Ítem": "Evaluación", "Desc": sel_p, "Det": f"x{cant_p}",
+                    "Moneda": moneda, "Unit": unit_p, "Total": unit_p * cant_p
+                })
+                st.rerun()
 
     # --- PESTAÑA SERVICIOS ---
     with tab_s:
@@ -228,8 +230,6 @@ def cotizador():
                     "Moneda": moneda, "Unit": unit_s, "Total": unit_s * horas
                 })
                 st.rerun()
-        else:
-            st.warning("No hay servicios configurados en el Excel para este país.")
 
     # 4. CARRITO
     if st.session_state['carrito']:
@@ -238,19 +238,18 @@ def cotizador():
         
         monedas_cart = df_c['Moneda'].unique()
         if len(monedas_cart) > 1:
-            st.error(f"⚠️ Error: Hay mezcla de monedas ({monedas_cart}). Vacía el carrito.")
+            st.error(f"⚠️ Error: Mezcla de monedas ({monedas_cart}). Vacía carrito.")
         else:
             mon_act = monedas_cart[0]
             st.dataframe(df_c, use_container_width=True, hide_index=True)
             
             subtotal = df_c['Total'].sum()
-            # Fee solo aplica a Evaluaciones
             tot_eval = df_c[df_c['Ítem'] == 'Evaluación']['Total'].sum()
             
             c_f1, c_f2 = st.columns([3, 1])
             with c_f2:
                 st.markdown("### Totales")
-                fee = st.checkbox("Fee 10% (Pruebas/PAA)", value=False)
+                fee = st.checkbox("Fee 10% (Solo Pruebas)", value=False)
                 comision = st.number_input("Comisión Banco", 0.0, value=30.0 if mon_act == "US$" else 0.0)
                 desc = st.number_input("Descuento", 0.0)
                 
@@ -294,8 +293,8 @@ def dashboard():
     k1, k2, k3 = st.columns(3)
     k1.write("Ventas por Moneda")
     k1.dataframe(df[df['estado'].isin(['Facturada','Pagada'])].groupby('moneda')['total'].sum())
-    k2.metric("Pipeline (Cant)", len(df[df['estado'].isin(['Enviada','Aprobada'])]))
-    k3.metric("Total Cotizaciones", len(df))
+    k2.metric("Pipeline", len(df[df['estado'].isin(['Enviada','Aprobada'])]))
+    k3.metric("Cotizaciones", len(df))
 
 def finanzas():
     st.title("💰 Finanzas")

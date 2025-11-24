@@ -160,9 +160,9 @@ if 'carrito' not in st.session_state:
 # --- FUNCIONES CORE ---
 def obtener_contexto(pais):
     if pais == "Chile":
-        return {"mon": "UF", "dp": df_p_cl, "ds": df_s_cl, "tipo": "Loc"}
+        return {"mon": "UF", "dp": df_p_cl, "ds": df_s_cl, "tipo": "Local"}
     if pais in ["Brasil", "Brazil"]:
-        return {"mon": "R$", "dp": df_p_br, "ds": df_s_br, "tipo": "Loc"}
+        return {"mon": "R$", "dp": df_p_br, "ds": df_s_br, "tipo": "Local"}
     fil = df_config[df_config['Pais'] == pais]
     niv = fil.iloc[0]['Nivel'] if not fil.empty else "Medio"
     return {"mon": "US$", "dp": df_p_usd, "ds": df_s_usd, "tipo": "Int", "niv": niv}
@@ -354,7 +354,7 @@ def modulo_cotizador():
         if lp:
             sp = c1.selectbox("Item", lp, key="p1")
             qp = c2.number_input(txt['qty'], 1, 10000, 10, key="q1")
-            up = calc_xls(ctx['dp'], sp, qp, ctx['tipo'] == 'Loc')
+            up = calc_xls(ctx['dp'], sp, qp, ctx['tipo'] == 'Local')
             c3.metric(txt['unit'], f"{up:,.2f}")
             if c4.button(txt['add'], key="b1"):
                 st.session_state['carrito'].append({"Ítem": "Evaluación", "Desc": sp, "Det": f"x{qp}", "Moneda": ctx['mon'], "Unit": up, "Total": up * qp})

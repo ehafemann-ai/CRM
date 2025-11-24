@@ -73,22 +73,19 @@ def cotizador():
 
     st.markdown("---")
 
-    # 2. AGREGADOR DE ÍTEMS (LA MEJORA CLAVE)
+    # 2. AGREGADOR DE ÍTEMS
     st.subheader("2. Selección de Ítems")
     
-    # Selector de tipo para limpiar la interfaz
     tipo_item = st.radio("¿Qué deseas agregar?", ["Licencia / Prueba (Volumen)", "Servicio Consultoría (Por Hora/Sesión)"], horizontal=True)
 
     col_input1, col_input2, col_input3, col_input4 = st.columns([3, 2, 2, 1])
 
     if "Prueba" in tipo_item:
-        # Lógica para PRUEBAS
         with col_input1:
             item_sel = st.selectbox("Seleccionar Prueba", list(DB_PRECIOS_PRUEBAS.keys()))
         with col_input2:
             cantidad = st.number_input("Cantidad de Evaluaciones", min_value=1, value=10, step=1)
         with col_input3:
-            # Cálculo en tiempo real
             precio_u = get_precio_prueba(item_sel, cantidad)
             st.metric("Precio Unitario (Tramo)", f"${precio_u:.2f}")
         with col_input4:
@@ -106,7 +103,6 @@ def cotizador():
                 st.rerun()
 
     else:
-        # Lógica para SERVICIOS
         with col_input1:
             serv_sel = st.selectbox("Tipo de Servicio", list(DB_TARIFAS_SERVICIOS.keys()))
         with col_input2:
@@ -129,15 +125,13 @@ def cotizador():
                 })
                 st.rerun()
 
-    # 3. TABLA RESUMEN (CARRITO)
+   # 3. TABLA RESUMEN (CARRITO)
     st.markdown("---")
     st.subheader("🛒 Detalle de la Cotización")
 
     if len(st.session_state['carrito']) > 0:
-        # Convertir a DataFrame para mostrar bonito
         df_cart = pd.DataFrame(st.session_state['carrito'])
         
-        # Mostrar tabla
         st.dataframe(
             df_cart,
             column_config={
@@ -148,7 +142,6 @@ def cotizador():
             hide_index=True
         )
 
-        # Cálculos finales
         subtotal = df_cart['Total'].sum()
         
         col_res1, col_res2 = st.columns([3, 1])
@@ -159,4 +152,125 @@ def cotizador():
             descuento = st.number_input("Descuento ($)", min_value=0.0, value=0.0)
 
             val_admin = subtotal * 0.10 if admin_fee else 0.0
-            total_final = subtotal + val_admin + banco_
+            total_final = subtotal + val_admin + banco_fee - descuento
+
+            st.markdown(f"""
+            | Concepto | Monto |
+            | :--- | ---: |
+            | **Subtotal** | **${subtotal:,.2f}** |
+            | Fee Admin (10%) | ${val_admin:,.2f} |
+            | Comisión Banco | ${banco_fee:,.2f} |
+            | Descuento | -${descuento:,.2f} |
+            | **TOTAL FINAL** | **${total_final:,.2f}** |
+            """)
+
+            if st.button("💾 CONFIRMAR Y GUARDAR", type="primary", use_container_width=True):
+                if not empresa:
+                    st.error("⚠️ Debes ingresar el nombre de la empresa.")
+                else:
+                    new_id = f"TP-{random.randint(2000, 9000)}"
+                    new_order = {
+                        'id': new_id,
+                        'fecha': fecha.strftime("%Y-%m-%d"),
+                        'empresa': empresa,
+                        'total': total_final,
+                        'estado': 'Enviada',
+                        'vendedor': vendedor
+                    }
+                    st.session_state['cotizaciones'] = pd.concat([st.session_state['cotizaciones'], pd.DataFrame([new_order])], ignore_index=True)
+                    st.session_state['carrito'] = []
+                    st.success(f"✅ Cotización {new_id} creada exitosamente.")
+                    st.balloons()
+        
+        with col_res1:
+            if st.button("🗑️ Vaciar Carrito"):
+                st.session_state['carrito'] = []
+                st.rerun()
+    else:
+        st.info("La cotización está vacía. Usa el panel de arriba para agregar Pruebas o Servicios.")
+
+# --- MÓDULO: DASHBOARD ---
+def dashboard():
+    st.title("📊 Tablero de Control")
+    df = st.session_state['cotizaciones']
+    df['fecha'] = pd.to_datetime(df['fecha'])
+    
+    k1, k2, k3, k4 = st.columns(4)
+    ventas = df[df['estado'].isin(['Facturada', 'Pagada'])]['total'].sum()
+    pipeline = df[df['estado'].isin(['Enviada', 'Aprobada'])]['total'].sum()
+    
+    k1.metric("Ventas Cerradas (Facturado)", f"${ventas:,.0f}")
+    k2.metric("Pipeline (En Negociación)", f"${pipeline:,.0f}")
+    k3.metric("Total Cotizaciones", len(df))
+    
+    hoy = datetime.now()
+    clientes = []
+    for emp in df['empresa'].unique():
+        fechas = df[df['empresa'] == emp]['fecha']
+        ultima = fechas.max()
+        estado = "Activo" if ultima >= (hoy - timedelta(days=365)) else "Inactivo (>1 año)"
+        clientes.append({"Empresa": emp, "Estado": estado})
+    
+    df_cli = pd.DataFrame(clientes)
+    if not df_cli.empty:
+        inactivos = len(df_cli[df_cli['Estado'] == "Inactivo (>1 año)"])
+        k4.metric("Clientes Inactivos", inactivos, delta_color="inverse")
+
+    st.markdown("---")
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        st.subheader("Avance de Metas")
+        ventas_vendedor = df[df['estado'].isin(['Facturada', 'Pagada'])].groupby('vendedor')['total'].sum()
+        for v, meta in st.session_state['metas'].items():
+            actual = ventas_vendedor.get(v, 0)
+            avance = min(actual / meta, 1.0)
+            st.write(f"**{v}**: ${actual:,.0f} / ${meta:,.0f}")
+            st.progress(avance)
+
+    with c2:
+        st.subheader("Últimas Cotizaciones")
+        st.dataframe(df.sort_values('fecha', ascending=False).head(5)[['fecha', 'empresa', 'total', 'estado']], hide_index=True)
+
+# --- MÓDULO: FINANZAS ---
+def finanzas():
+    st.title("💰 Gestión Financiera")
+    st.info("Actualiza aquí el estado de las cotizaciones cuando se facturen o paguen.")
+    
+    df = st.session_state['cotizaciones']
+    
+    df_edited = st.data_editor(
+        df,
+        column_config={
+            "estado": st.column_config.SelectboxColumn(
+                "Estado Actual",
+                options=["Enviada", "Aprobada", "Facturada", "Pagada", "Rechazada"],
+                required=True
+            ),
+            "total": st.column_config.NumberColumn(format="$%d"),
+            "fecha": st.column_config.DateColumn("Fecha"),
+        },
+        disabled=["id", "empresa", "vendedor"],
+        hide_index=True,
+        use_container_width=True
+    )
+
+    if not df_edited.equals(df):
+        st.session_state['cotizaciones'] = df_edited
+        st.success("Cambios guardados correctamente.")
+
+# --- MENÚ LATERAL (CRUCIAL PARA QUE FUNCIONE) ---
+with st.sidebar:
+    st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=80)
+    st.title("TalentPro App")
+    opcion = st.radio("Navegación", ["Cotizador", "Dashboard", "Finanzas"], label_visibility="collapsed")
+    st.markdown("---")
+    st.caption("v2.0 - Sistema Integrado")
+
+# ENRUTAMIENTO (SI ESTO FALTA, SALE EN BLANCO)
+if opcion == "Cotizador":
+    cotizador()
+elif opcion == "Dashboard":
+    dashboard()
+elif opcion == "Finanzas":
+    finanzas()

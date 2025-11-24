@@ -45,7 +45,7 @@ TEXTOS = {
         "subtotal": "Subtotal Neto", "fee": "Fee Admin (10%)", "grand_total": "TOTAL A PAGAR",
         "invoice_to": "Preparado para:", "quote": "COTIZACIÓN", "date": "Fecha", "validity": "Validez: 30 días",
         "save": "Generar Cotización", "download": "Descargar PDF",
-        "sec_prod": "Licencias y Evaluaciones", "sec_serv": "Servicios Profesionales",
+        "sec_prod": "Evaluaciones", "sec_serv": "Servicios Profesionales",
         "discount": "Descuento", "tax": "Impuestos" # <-- AGREGADOS
     },
     "EN": {

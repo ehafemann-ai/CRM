@@ -308,7 +308,7 @@ def modulo_cotizador():
     # EJECUTIVO AUTOMÁTICO
     current_u = st.session_state['current_user']
     user_real_name = st.session_state['users_db'][current_u].get('name', current_u)
-    ven = cc4.text_input("Ejecutivo", value=user_real_name, disabled=True)
+    ven = cc4.text_input("Consultor", value=user_real_name, disabled=True)
     
     proj = st.text_input(txt['proj'])
     
@@ -384,7 +384,7 @@ def modulo_cotizador():
 def modulo_seguimiento():
     st.title("🤝 Seguimiento"); df=st.session_state['cotizaciones']
     if df.empty: st.info("Vacio"); return
-    f1,f2=st.columns(2); vend=f1.multiselect("Ejecutivo",df['vendedor'].unique())
+    f1,f2=st.columns(2); vend=f1.multiselect("Consultor",df['vendedor'].unique())
     dv=df[df['vendedor'].isin(vend)] if vend else df
     da=dv[dv['estado'].isin(['Enviada','Aprobada','Rechazada'])]
     for i, r in da.iterrows():

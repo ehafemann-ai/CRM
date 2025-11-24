@@ -22,7 +22,7 @@ st.markdown("""<style>
 </style>""", unsafe_allow_html=True)
 
 # ==============================================================================
-# 1. GESTIÓN DE USUARIOS
+# 1. GESTIÓN DE USUARIOS (PRIORIDAD SECRETS)
 # ==============================================================================
 def cargar_usuarios_github():
     try:
@@ -31,27 +31,44 @@ def cargar_usuarios_github():
         if r.status_code == 200:
             content = base64.b64decode(r.json()['content']).decode('utf-8')
             return json.loads(content), r.json()['sha']
-        else:
-            hashed = bcrypt.hashpw("Max1234".encode(), bcrypt.gensalt()).decode()
-            return {"ehafemann@talentpro-latam.com": {"name": "Emilio Hafemann", "role": "Super Admin", "password_hash": hashed}}, None
+        return {}, None
     except: return {}, None
 
 def guardar_usuarios_github(users_dict, sha):
     try:
         json_str = json.dumps(users_dict, indent=4)
         content_b64 = base64.b64encode(json_str.encode()).decode()
-        data = {"message": "Update users db", "content": content_b64, "sha": sha}
+        data = {"message": "Update users db", "content": content_b64}
+        if sha: data["sha"] = sha # Solo enviar SHA si existe (update vs create)
+        
         headers = {"Authorization": f"token {st.secrets['github']['token']}", "Accept": "application/vnd.github.v3+json"}
         r = requests.put(st.secrets['github']['url_usuarios'], headers=headers, json=data)
         return r.status_code in [200, 201]
     except: return False
 
+# INICIALIZACIÓN Y SINCRONIZACIÓN
 if 'users_db' not in st.session_state:
     users, sha = cargar_usuarios_github()
-    admin_email = "ehafemann@talentpro-latam.com"
-    if admin_email not in users:
-        hashed = bcrypt.hashpw("Max1234".encode(), bcrypt.gensalt()).decode()
-        users[admin_email] = {"name": "Emilio Hafemann", "role": "Super Admin", "password_hash": hashed}
+    
+    # --- LÓGICA MAESTRA: Forzar credenciales desde Secrets ---
+    # Esto sobreescribe lo que venga de GitHub para el Super Admin
+    # asegurando que siempre puedas entrar con lo que definiste en Secrets.
+    try:
+        admin_user = st.secrets["auth"]["admin_user"]
+        admin_pass = st.secrets["auth"]["admin_pass"]
+        
+        # Generar hash fresco de la contraseña del Secret
+        hashed_master = bcrypt.hashpw(admin_pass.encode(), bcrypt.gensalt()).decode()
+        
+        # Actualizar/Crear el admin en la memoria
+        users[admin_user] = {
+            "name": "Emilio Hafemann",
+            "role": "Super Admin",
+            "password_hash": hashed_master
+        }
+    except Exception as e:
+        st.error(f"Error configurando Admin desde Secrets: {e}")
+    
     st.session_state['users_db'] = users
     st.session_state['users_sha'] = sha
 
@@ -72,6 +89,7 @@ def login_page():
                 user = st.session_state['users_db'].get(u)
                 if user:
                     try:
+                        # Verificación Bcrypt
                         if bcrypt.checkpw(p.encode(), user.get('password_hash','').encode()):
                             st.session_state['auth_status'] = True
                             st.session_state['current_user'] = u
@@ -80,7 +98,7 @@ def login_page():
                             time.sleep(0.5)
                             st.rerun()
                         else: st.error("Credenciales inválidas")
-                    except: st.error("Error de hash")
+                    except: st.error("Error de validación.")
                 else: st.error("Credenciales inválidas")
 
 def logout():
@@ -142,7 +160,7 @@ TEXTOS = {
         "qty": "Cant.", "unit": "Unitario", "total": "Total", "subtotal": "Subtotal", "fee": "Fee Admin (10%)", 
         "grand_total": "TOTAL A PAGAR", "invoice_to": "Facturar a:", "quote": "COTIZACIÓN", "date": "Fecha", 
         "validity": "Validez: 30 días", "save": "Guardar y Descargar", "download": "Descargar PDF", 
-        "sec_prod": "Assessments", "sec_serv": "Servicios", "discount": "Descuento", "tax": "Impuestos", 
+        "sec_prod": "Licencias", "sec_serv": "Servicios", "discount": "Descuento", "tax": "Impuestos", 
         "legal_intl": "Facturación a {pais}. Sumar impuestos retenidos y gastos OUR.", 
         "noshow_title": "Políticas de Asistencia y No-Show:",
         "noshow_text": "Para Feedbacks, Coaching, Preparaciones o Entrevistas: Se permite un límite de 15% de ausencias con aviso de menos de 24 horas. Si la persona no llega y no avisó, se esperará 10 minutos y se enviará correo. Si no llega, se cobrará tarifa 'No Show' del 50% de la sesión."
@@ -197,7 +215,7 @@ def calc_xls(df, p, c, l):
     if r.empty: return 0.0
     ts = [50,100,200,300,500,1000,'Infinito'] if l else [100,200,300,500,1000,'Infinito']
     for t in ts:
-        if c <= (float('inf') if t=='Infinito' else t):
+        if c <= (float('inf') if t == 'Infinito' else t):
             try: return float(r.iloc[0][t])
             except: 
                 try: return float(r.iloc[0][str(t)])
@@ -304,12 +322,9 @@ def modulo_cotizador():
     
     st.markdown("---"); cc1,cc2,cc3,cc4=st.columns(4)
     emp = cc1.text_input(txt['client']); con = cc2.text_input("Contacto"); ema = cc3.text_input("Email")
-    
-    # EJECUTIVO AUTOMÁTICO
     current_u = st.session_state['current_user']
     user_real_name = st.session_state['users_db'][current_u].get('name', current_u)
-    ven = cc4.text_input("Consultor", value=user_real_name, disabled=True)
-    
+    ven = cc4.text_input("Ejecutivo", value=user_real_name, disabled=True)
     proj = st.text_input(txt['proj'])
     
     st.markdown("---"); tp, ts = st.tabs([txt['sec_prod'], txt['sec_serv']])
@@ -346,9 +361,10 @@ def modulo_cotizador():
                 nid=f"TP-{random.randint(1000,9999)}"; cli={'empresa':emp,'contacto':con,'email':ema}
                 ext={'fee':fee,'bank':bnk,'desc':dsc,'pais':ps,'id':nid}
                 
-                pdf = PDF() # Instancia Única
+                pdf = PDF() # INSTANCIA ÚNICA
                 pr, sv = [x for x in st.session_state['carrito'] if x['Ítem']=='Evaluación'], [x for x in st.session_state['carrito'] if x['Ítem']=='Servicio']
                 
+                # LÓGICA PÁGINAS
                 if ps == "Chile" and pr and sv:
                     # PAG 1 (SPA)
                     sub_p = sum(x['Total'] for x in pr); fee_p = sub_p * 0.10 if fee else 0; tax_p = sub_p * 0.19; tot_p = sub_p + fee_p + tax_p
@@ -360,10 +376,12 @@ def modulo_cotizador():
                     calc_s = {'subtotal':sub_s, 'fee':0, 'tax_name':'', 'tax_val':0, 'bank':bnk, 'desc':dsc, 'total':tot_s}
                     agregar_pagina_al_pdf(pdf, EMPRESAS['Chile_Servicios'], cli, sv, calc_s, idi, {'id':f"{nid}-S", 'pais':ps}, f"{txt['quote']} - Servicios")
                 else:
+                    # CASO NORMAL (1 PÁGINA)
                     ent = get_empresa(ps, st.session_state['carrito'])
                     calc = {'subtotal':sub, 'fee':vfee, 'tax_name':tn, 'tax_val':tv, 'bank':bnk, 'desc':dsc, 'total':fin}
                     agregar_pagina_al_pdf(pdf, ent, cli, st.session_state['carrito'], calc, idi, ext, txt['quote'])
 
+                # GENERAR BYTES Y FILENAME
                 b64 = base64.b64encode(pdf.output(dest='S').encode('latin-1')).decode('latin-1')
                 clean_date = datetime.now().strftime("%d-%m-%y")
                 clean_proj = proj.replace(" ", "_") if proj else "Proyecto"
@@ -384,7 +402,7 @@ def modulo_cotizador():
 def modulo_seguimiento():
     st.title("🤝 Seguimiento"); df=st.session_state['cotizaciones']
     if df.empty: st.info("Vacio"); return
-    f1,f2=st.columns(2); vend=f1.multiselect("Consultor",df['vendedor'].unique())
+    f1,f2=st.columns(2); vend=f1.multiselect("Ejecutivo",df['vendedor'].unique())
     dv=df[df['vendedor'].isin(vend)] if vend else df
     da=dv[dv['estado'].isin(['Enviada','Aprobada','Rechazada'])]
     for i, r in da.iterrows():

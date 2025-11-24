@@ -137,9 +137,36 @@ def obtener_indicadores():
 TASAS = obtener_indicadores()
 
 TEXTOS = {
-    "ES": {"title": "Cotizador", "client": "Cliente", "proj": "Título del Proyecto", "add": "Agregar", "desc": "Descripción", "qty": "Cant.", "unit": "Unitario", "total": "Total", "subtotal": "Subtotal", "fee": "Fee Admin (10%)", "grand_total": "TOTAL A PAGAR", "invoice_to": "Facturar a:", "quote": "COTIZACIÓN", "date": "Fecha", "validity": "Validez: 30 días", "save": "Guardar y Descargar", "download": "Descargar PDF", "sec_prod": "Licencias", "sec_serv": "Servicios", "discount": "Descuento", "tax": "Impuestos", "legal_intl": "Facturación a {pais}. Sumar impuestos retenidos y gastos OUR.", "noshow_title": "Política No-Show:", "noshow_text": "Multa 50% por inasistencia sin aviso 24h."},
-    "EN": {"title": "Quote Tool", "client": "Client", "proj": "Project Title", "add": "Add", "desc": "Description", "qty": "Qty", "unit": "Price", "total": "Total", "subtotal": "Subtotal", "fee": "Admin Fee", "grand_total": "TOTAL", "invoice_to": "Bill to:", "quote": "QUOTATION", "date": "Date", "validity": "Valid: 30 days", "save": "Save & Download", "download": "Download PDF", "sec_prod": "Licenses", "sec_serv": "Services", "discount": "Discount", "tax": "Taxes", "legal_intl": "Billing to {pais}. Add withholding taxes and OUR bank fees.", "noshow_title": "No-Show Policy:", "noshow_text": "50% fee for absence without 24h notice."},
-    "PT": {"title": "Cotação", "client": "Cliente", "proj": "Título do Projeto", "add": "Adicionar", "desc": "Descrição", "qty": "Qtd", "unit": "Unitário", "total": "Total", "subtotal": "Subtotal", "fee": "Taxa Admin", "grand_total": "TOTAL", "invoice_to": "Faturar para:", "quote": "COTAÇÃO", "date": "Data", "validity": "Validade: 30 dias", "save": "Salvar e Baixar", "download": "Baixar PDF", "sec_prod": "Licenças", "sec_serv": "Serviços", "discount": "Desconto", "tax": "Impostos", "legal_intl": "Faturamento para {pais}. Adicionar impostos retidos e taxas bancárias.", "noshow_title": "Política No-Show:", "noshow_text": "Multa de 50% por ausência sem aviso de 24h."}
+    "ES": {
+        "title": "Cotizador", "client": "Cliente", "proj": "Título del Proyecto", "add": "Agregar", "desc": "Descripción", 
+        "qty": "Cant.", "unit": "Unitario", "total": "Total", "subtotal": "Subtotal", "fee": "Fee Admin (10%)", 
+        "grand_total": "TOTAL A PAGAR", "invoice_to": "Facturar a:", "quote": "COTIZACIÓN", "date": "Fecha", 
+        "validity": "Validez: 30 días", "save": "Guardar y Descargar", "download": "Descargar PDF", 
+        "sec_prod": "Licencias", "sec_serv": "Servicios", "discount": "Descuento", "tax": "Impuestos", 
+        "legal_intl": "Facturación a {pais}. Sumar impuestos retenidos y gastos OUR.", 
+        "noshow_title": "Políticas de Asistencia y No-Show:",
+        "noshow_text": "Para Feedbacks, Coaching, Preparaciones o Entrevistas: Se permite un límite de 15% de ausencias con aviso de menos de 24 horas. Si la persona no llega y no avisó, se esperará 10 minutos y se enviará correo. Si no llega, se cobrará tarifa 'No Show' del 50% de la sesión."
+    },
+    "EN": {
+        "title": "Quote Tool", "client": "Client", "proj": "Project Title", "add": "Add", "desc": "Description", 
+        "qty": "Qty", "unit": "Price", "total": "Total", "subtotal": "Subtotal", "fee": "Admin Fee", 
+        "grand_total": "TOTAL", "invoice_to": "Bill to:", "quote": "QUOTATION", "date": "Date", 
+        "validity": "Valid: 30 days", "save": "Save & Download", "download": "Download PDF", 
+        "sec_prod": "Licenses", "sec_serv": "Services", "discount": "Discount", "tax": "Taxes", 
+        "legal_intl": "Billing to {pais}. Add withholding taxes and OUR bank fees.", 
+        "noshow_title": "Attendance & No-Show Policy:",
+        "noshow_text": "For Feedbacks, Coaching, Prep or Interviews: A 15% limit on absences with less than 24h notice applies. If the person does not show up without notice, we will wait 10 mins and send an email. If they do not arrive, a 50% 'No Show' fee applies."
+    },
+    "PT": {
+        "title": "Cotação", "client": "Cliente", "proj": "Título do Projeto", "add": "Adicionar", "desc": "Descrição", 
+        "qty": "Qtd", "unit": "Unitário", "total": "Total", "subtotal": "Subtotal", "fee": "Taxa Admin", 
+        "grand_total": "TOTAL", "invoice_to": "Faturar para:", "quote": "COTAÇÃO", "date": "Data", 
+        "validity": "Validade: 30 dias", "save": "Salvar e Baixar", "download": "Baixar PDF", 
+        "sec_prod": "Licenças", "sec_serv": "Serviços", "discount": "Desconto", "tax": "Impostos", 
+        "legal_intl": "Faturamento para {pais}. Adicionar impostos retidos e taxas bancárias.", 
+        "noshow_title": "Política de Assistência e No-Show:",
+        "noshow_text": "Para Feedbacks, Coaching, Preparação ou Entrevistas: Limite de 15% de ausências com menos de 24h de aviso. Se a pessoa não comparecer sem aviso, aguardaremos 10 min. Se não chegar, será cobrada uma taxa de 'No Show' de 50%."
+    }
 }
 EMPRESAS = {
     "Brasil": {"Nombre": "TalentPRO Brasil Ltda.", "ID": "CNPJ: 49.704.046/0001-80", "Dir": "Av. Marcos Penteado 939, Tamboré", "Giro": "Consultoria"},
@@ -252,14 +279,17 @@ def agregar_pagina_al_pdf(pdf, empresa, cliente, items, calc, lang, extras, titu
     if extras.get('desc', 0) > 0: r(t['discount'], -extras['desc'])
     pdf.ln(1); r(t['grand_total'], calc['total'], True); pdf.ln(10)
     
-    # LEGAL
+    # LEGAL & NO SHOW (RESTAURADO COMPLETO)
     pdf.set_font("Arial", 'I', 8); pdf.set_text_color(80)
+    
     if empresa['Nombre'] == EMPRESAS['Latam']['Nombre']:
         pdf.multi_cell(0, 4, t['legal_intl'].format(pais=extras['pais']), 0, 'L'); pdf.ln(3)
+    
     trigs = ['feedback', 'coaching', 'entrevista', 'preparación', 'preparação', 'interview']
     if any(any(tr in i['Desc'].lower() for tr in trigs) for i in items):
         pdf.set_font("Arial", 'B', 8); pdf.cell(0, 4, t['noshow_title'], 0, 1)
         pdf.set_font("Arial", '', 8); pdf.multi_cell(0, 4, t['noshow_text'], 0, 'L'); pdf.ln(3)
+        
     pdf.set_text_color(100); pdf.cell(0, 5, t['validity'], 0, 1)
 
 # ==============================================================================
@@ -277,7 +307,7 @@ def modulo_cotizador():
     
     st.markdown("---"); cc1,cc2,cc3,cc4=st.columns(4)
     emp = cc1.text_input(txt['client']); con = cc2.text_input("Contacto"); ema = cc3.text_input("Email"); ven = cc4.selectbox("Ejecutivo", ["Comercial 1", "Comercial 2"])
-    proj = st.text_input(txt['proj']) # NUEVO CAMPO DE PROYECTO
+    proj = st.text_input(txt['proj']) # CAMPO PROYECTO
     
     st.markdown("---"); tp, ts = st.tabs([txt['sec_prod'], txt['sec_serv']])
     with tp:
@@ -313,34 +343,26 @@ def modulo_cotizador():
                 nid=f"TP-{random.randint(1000,9999)}"; cli={'empresa':emp,'contacto':con,'email':ema}
                 ext={'fee':fee,'bank':bnk,'desc':dsc,'pais':ps,'id':nid}
                 
-                # --- GENERACIÓN DE ARCHIVO UNIFICADO (MULTI-PÁGINA) ---
-                pdf = PDF() # Instancia ÚNICA
-                
+                pdf = PDF() # INSTANCIA ÚNICA
                 pr, sv = [x for x in st.session_state['carrito'] if x['Ítem']=='Evaluación'], [x for x in st.session_state['carrito'] if x['Ítem']=='Servicio']
                 
-                # CASO ESPECIAL CHILE: 2 PÁGINAS EN EL MISMO PDF
+                # LÓGICA PÁGINAS
                 if ps == "Chile" and pr and sv:
-                    # PÁGINA 1: PRUEBAS (SPA)
-                    sub_p = sum(x['Total'] for x in pr)
-                    fee_p = sub_p * 0.10 if fee else 0
-                    tax_p = sub_p * 0.19
-                    tot_p = sub_p + fee_p + tax_p
+                    # PAG 1 (PRUEBAS)
+                    sub_p = sum(x['Total'] for x in pr); fee_p = sub_p * 0.10 if fee else 0; tax_p = sub_p * 0.19; tot_p = sub_p + fee_p + tax_p
                     calc_p = {'subtotal':sub_p, 'fee':fee_p, 'tax_name':'IVA (19%)', 'tax_val':tax_p, 'total':tot_p}
                     agregar_pagina_al_pdf(pdf, EMPRESAS['Chile_Pruebas'], cli, pr, calc_p, idi, {'id':f"{nid}-P", 'pais':ps}, f"{txt['quote']} - Pruebas")
                     
-                    # PÁGINA 2: SERVICIOS (LTDA)
-                    sub_s = sum(x['Total'] for x in sv)
-                    tot_s = sub_s + bnk - dsc
+                    # PAG 2 (SERVICIOS)
+                    sub_s = sum(x['Total'] for x in sv); tot_s = sub_s + bnk - dsc
                     calc_s = {'subtotal':sub_s, 'fee':0, 'tax_name':'', 'tax_val':0, 'bank':bnk, 'desc':dsc, 'total':tot_s}
                     agregar_pagina_al_pdf(pdf, EMPRESAS['Chile_Servicios'], cli, sv, calc_s, idi, {'id':f"{nid}-S", 'pais':ps}, f"{txt['quote']} - Servicios")
-                
                 else:
-                    # CASO NORMAL (1 PÁGINA)
                     ent = get_empresa(ps, st.session_state['carrito'])
                     calc = {'subtotal':sub, 'fee':vfee, 'tax_name':tn, 'tax_val':tv, 'bank':bnk, 'desc':dsc, 'total':fin}
                     agregar_pagina_al_pdf(pdf, ent, cli, st.session_state['carrito'], calc, idi, ext, txt['quote'])
 
-                # GENERAR BYTES Y FILENAME
+                # FILENAME
                 b64 = base64.b64encode(pdf.output(dest='S').encode('latin-1')).decode('latin-1')
                 clean_date = datetime.now().strftime("%d-%m-%y")
                 clean_proj = proj.replace(" ", "_") if proj else "Proyecto"
@@ -378,7 +400,8 @@ def modulo_finanzas():
     if not df_ok.empty:
         st.write("Pendientes:")
         for i, r in df_ok.iterrows():
-            c1,c2,c3=st.columns([3,2,1]); c1.write(f"**{r['id']}** {r['empresa']}"); c2.write(f"{r['moneda']} {r['total']:,.2f}")
+            c1,c2,c3=st.columns([3,2,1])
+            c1.write(f"**{r['id']}** {r['empresa']}"); c2.write(f"{r['moneda']} {r['total']:,.2f}")
             if c3.button("Facturar",key=f"f{r['id']}"): st.session_state['cotizaciones'].at[i,'estado']='Facturada'; st.rerun()
             st.divider()
     st.write("Histórico:"); st.dataframe(df[df['estado']=='Facturada'])

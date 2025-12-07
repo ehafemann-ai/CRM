@@ -74,10 +74,7 @@ if 'leads_db' not in st.session_state:
 if 'cotizaciones' not in st.session_state:
     cots, sha_c = github_get_json('url_cotizaciones')
     st.session_state['cotizaciones_sha'] = sha_c
-    
-    # Definimos columnas completas incluyendo las necesarias para reconstruir PDF
     cols = ['id', 'fecha', 'empresa', 'pais', 'total', 'moneda', 'estado', 'vendedor', 'oc', 'factura', 'pago', 'hes', 'hes_num', 'items', 'pdf_data']
-    
     if cots and isinstance(cots, list):
         df = pd.DataFrame(cots)
         for c in cols:
@@ -254,7 +251,7 @@ def generar_pdf_final(emp, cli, items, calc, titulo, extras):
 # 5. MÓDULOS APP
 # ==============================================================================
 def modulo_crm():
-    st.title("📇 CRM & Gestión Comercial")
+    st.title("📇 Prospectos y Clientes")
     tab1, tab2 = st.tabs(["📋 Gestión de Leads", "🏢 Cartera Clientes"])
     
     with tab1:
@@ -382,7 +379,6 @@ def modulo_cotizador():
 
                 st.markdown(links_html, unsafe_allow_html=True)
                 
-                # GUARDAR DETALLE PARA FINANZAS
                 row = {
                     'id':nid, 'fecha':str(datetime.now().date()), 'empresa':emp, 'pais':ps, 'total':fin, 'moneda':ctx['mon'], 
                     'estado':'Enviada', 'vendedor':ven, 'oc':'', 'factura':'', 'pago':'Pendiente', 'hes':False, 'hes_num':'',
@@ -451,7 +447,6 @@ def modulo_finanzas():
                     st.markdown(f"**{r['empresa']}** | ID: {r['id']} | Total: {r['moneda']} {r['total']:,.0f}")
                     if r.get('hes'): st.error("🚨 REQUISITO: Esta venta requiere N° HES o MIGO para facturar.")
                     
-                    # LOGICA REGENERAR PDF (Detectar si hay items guardados)
                     if r.get('items') and isinstance(r['items'], list):
                         cli = {'empresa':r['empresa'], 'contacto':'', 'email':''} 
                         ext = r.get('pdf_data', {'id':r['id'], 'pais':r['pais'], 'bank':0, 'desc':0})
@@ -604,12 +599,12 @@ def modulo_admin():
 with st.sidebar:
     if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=130)
     role = st.session_state.get('current_role', 'Comercial')
-    opts = ["CRM", "Cotizador", "Seguimiento", "Dashboards", "Finanzas"]; icos = ['person', 'file', 'check', 'bar-chart', 'currency-dollar']
+    opts = ["Prospectos y Clientes", "Cotizador", "Seguimiento", "Dashboards", "Finanzas"]; icos = ['person', 'file', 'check', 'bar-chart', 'currency-dollar']
     if role == "Super Admin": opts.append("Usuarios"); icos.append("people")
     menu = option_menu("Menú", opts, icons=icos, default_index=0)
     if st.button("Salir"): logout()
 
-if menu == "CRM": modulo_crm()
+if menu == "Prospectos y Clientes": modulo_crm()
 elif menu == "Cotizador": modulo_cotizador()
 elif menu == "Seguimiento": modulo_seguimiento()
 elif menu == "Dashboards": modulo_dashboard()

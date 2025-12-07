@@ -75,15 +75,18 @@ if 'cotizaciones' not in st.session_state:
     cots, sha_c = github_get_json('url_cotizaciones')
     st.session_state['cotizaciones_sha'] = sha_c
     
-    # Definimos las columnas, incluyendo las nuevas para Finanzas
-    # hes: Booleano (Si requiere o no)
-    # hes_num: String (El número real ingresado por finanzas)
-    cols = ['id', 'fecha', 'empresa', 'pais', 'total', 'moneda', 'estado', 'vendedor', 'oc', 'factura', 'pago', 'hes', 'hes_num']
+    # Nuevas columnas para guardar el detalle y poder regenerar el PDF
+    # items: lista del carrito
+    # pdf_data: datos extra (fee, descuentos, bank) para recalcular
+    cols = ['id', 'fecha', 'empresa', 'pais', 'total', 'moneda', 'estado', 'vendedor', 'oc', 'factura', 'pago', 'hes', 'hes_num', 'items', 'pdf_data']
     
     if cots and isinstance(cots, list):
         df = pd.DataFrame(cots)
         for c in cols:
-            if c not in df.columns: df[c] = ""
+            if c not in df.columns: 
+                # Si es columna de datos complejos, inicializamos como objeto (None/Lista vacía)
+                if c in ['items', 'pdf_data']: df[c] = None 
+                else: df[c] = ""
         st.session_state['cotizaciones'] = df
     else:
         st.session_state['cotizaciones'] = pd.DataFrame(columns=cols)
@@ -381,7 +384,14 @@ def modulo_cotizador():
                     st.success("✅ Cotización generada")
 
                 st.markdown(links_html, unsafe_allow_html=True)
-                row = {'id':nid, 'fecha':str(datetime.now().date()), 'empresa':emp, 'pais':ps, 'total':fin, 'moneda':ctx['mon'], 'estado':'Enviada', 'vendedor':ven, 'oc':'', 'factura':'', 'pago':'Pendiente', 'hes':False, 'hes_num':''}
+                
+                # GUARDADO CON DETALLE PARA REGENERAR PDF
+                row = {
+                    'id':nid, 'fecha':str(datetime.now().date()), 'empresa':emp, 'pais':ps, 'total':fin, 'moneda':ctx['mon'], 
+                    'estado':'Enviada', 'vendedor':ven, 'oc':'', 'factura':'', 'pago':'Pendiente', 'hes':False, 'hes_num':'',
+                    'items': st.session_state['carrito'], 'pdf_data': ext
+                }
+                
                 st.session_state['cotizaciones'] = pd.concat([st.session_state['cotizaciones'], pd.DataFrame([row])], ignore_index=True)
                 if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
                     st.info("Guardado en Base de Datos"); st.session_state['carrito']=[]; time.sleep(2)
@@ -408,7 +418,6 @@ def modulo_seguimiento():
             with col_status:
                 st.caption("Estado de la Oportunidad")
                 est_options = ["Enviada", "Aprobada", "Rechazada", "Perdida"]
-                # Si ya está facturada, Comercial no debe moverla
                 disabled_st = r['estado'] == 'Facturada'
                 current_st = r['estado'] if r['estado'] in est_options else est_options[0]
                 if r['estado'] == 'Facturada': current_st = "Aprobada"
@@ -435,7 +444,6 @@ def modulo_finanzas():
     
     with tab_billing:
         st.subheader("Pendientes de Facturación")
-        # Filtro: Solo las Aprobadas por Comercial
         to_bill = df[df['estado'] == 'Aprobada']
         
         if to_bill.empty: 
@@ -446,6 +454,45 @@ def modulo_finanzas():
                     st.markdown(f"**{r['empresa']}** | ID: {r['id']} | Total: {r['moneda']} {r['total']:,.0f}")
                     if r.get('hes'): st.error("🚨 REQUISITO: Esta venta requiere N° HES o MIGO para facturar.")
                     
+                    # LOGICA REGENERAR PDF
+                    if r.get('items'):
+                        cli = {'empresa':r['empresa'], 'contacto':'', 'email':''} # Datos basicos para rearmar
+                        ext = r.get('pdf_data', {'id':r['id'], 'pais':r['pais'], 'bank':0, 'desc':0})
+                        # Re-construir enlaces
+                        prod_items = [x for x in r['items'] if x['Ítem']=='Evaluación']
+                        serv_items = [x for x in r['items'] if x['Ítem']=='Servicio']
+                        
+                        pdf_links = ""
+                        # CASO CHILE DOBLE
+                        if r['pais'] == "Chile" and prod_items and serv_items:
+                             sub_p = sum(x['Total'] for x in prod_items)
+                             tax_p = sub_p*0.19
+                             tot_p = sub_p*1.19
+                             # Re-calculo simple para visualizacion
+                             calc_p = {'subtotal':sub_p, 'fee':0, 'tax_name':"IVA", 'tax_val':tax_p, 'total':tot_p}
+                             pdf_p = generar_pdf_final(EMPRESAS['Chile_Pruebas'], cli, prod_items, calc_p, "COTIZACIÓN", ext)
+                             b64_p = base64.b64encode(pdf_p).decode('latin-1')
+                             
+                             sub_s = sum(x['Total'] for x in serv_items)
+                             tot_s = sub_s # Simplificado
+                             calc_s = {'subtotal':sub_s, 'fee':0, 'tax_name':"", 'tax_val':0, 'total':tot_s}
+                             pdf_s = generar_pdf_final(EMPRESAS['Chile_Servicios'], cli, serv_items, calc_s, "COTIZACIÓN", ext)
+                             b64_s = base64.b64encode(pdf_s).decode('latin-1')
+                             
+                             pdf_links = f'<a href="data:application/pdf;base64,{b64_p}" download="Cot_{r["id"]}_P.pdf">📄 Ver PDF SpA</a> | <a href="data:application/pdf;base64,{b64_s}" download="Cot_{r["id"]}_S.pdf">📄 Ver PDF Ltda</a>'
+                        else:
+                             # CASO NORMAL
+                             ent = get_empresa(r['pais'], r['items'])
+                             # Recalcular totales rapidos para el PDF (approx)
+                             sub = sum(x['Total'] for x in r['items'])
+                             tn, tv = get_impuestos(r['pais'], sub, sub) # Approx
+                             calc = {'subtotal':sub, 'fee':0, 'tax_name':tn, 'tax_val':tv, 'total':r['total']}
+                             pdf = generar_pdf_final(ent, cli, r['items'], calc, "COTIZACIÓN", ext)
+                             b64 = base64.b64encode(pdf).decode('latin-1')
+                             pdf_links = f'<a href="data:application/pdf;base64,{b64}" download="Cot_{r["id"]}.pdf">📄 Ver PDF Cotización</a>'
+                        
+                        st.markdown(pdf_links, unsafe_allow_html=True)
+
                     c1, c2, c3, c4 = st.columns(4)
                     new_oc = c1.text_input("Orden de Compra (OC)", value=r.get('oc',''), key=f"oc_{r['id']}")
                     new_hes_num = c2.text_input("N° HES / MIGO", value=r.get('hes_num',''), key=f"hnum_{r['id']}")
@@ -463,17 +510,13 @@ def modulo_finanzas():
 
     with tab_collection:
         st.subheader("Historial y Cobranza")
-        # Filtro: Solo las Facturadas
         billed = df[df['estado'] == 'Facturada'].copy()
         if billed.empty:
             st.info("No hay historial de facturación.")
         else:
-            # Mostrar tabla detallada como se solicitó
             st.dataframe(billed[['fecha', 'id', 'empresa', 'total', 'moneda', 'oc', 'hes_num', 'factura', 'pago']], use_container_width=True)
-            
             st.markdown("---")
             st.write("**Gestión de Pagos**")
-            # Selección simplificada para actualizar pago
             sel_inv = st.selectbox("Seleccionar Factura para actualizar pago", billed['factura'].unique())
             if sel_inv:
                 row_idx = billed[billed['factura'] == sel_inv].index[0]

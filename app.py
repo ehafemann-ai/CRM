@@ -55,6 +55,7 @@ def github_push_json(url_key, data_dict, sha):
     except: return False
 
 def sync_users_after_update():
+    """Recarga la base de usuarios inmediatamente tras un cambio"""
     users, sha = github_get_json('url_usuarios')
     st.session_state['users_db'] = users
     st.session_state['users_sha'] = sha
@@ -394,6 +395,7 @@ def modulo_cotizador():
                     'estado':'Enviada', 'vendedor':ven, 'oc':'', 'factura':'', 'pago':'Pendiente', 'hes':False, 'hes_num':'',
                     'items': st.session_state['carrito'], 'pdf_data': ext
                 }
+                
                 st.session_state['cotizaciones'] = pd.concat([st.session_state['cotizaciones'], pd.DataFrame([row])], ignore_index=True)
                 if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
                     st.info("Guardado en Base de Datos"); st.session_state['carrito']=[]; time.sleep(2)
@@ -410,7 +412,6 @@ def modulo_seguimiento():
     curr_user = st.session_state['current_user']
     curr_role = st.session_state.get('current_role', 'Comercial')
     
-    # Filtro por equipo
     if curr_role == 'Comercial':
         my_team = st.session_state['users_db'][curr_user].get('equipo', 'N/A')
         team_names = [u['name'] for k, u in st.session_state['users_db'].items() if u.get('equipo') == my_team]
@@ -487,47 +488,41 @@ def modulo_finanzas():
                              pdf_links = f'<a href="data:application/pdf;base64,{b64_p}" download="Cot_{r["id"]}_P.pdf">📄 Ver PDF SpA</a> | <a href="data:application/pdf;base64,{b64_s}" download="Cot_{r["id"]}_S.pdf">📄 Ver PDF Ltda</a>'
                         else:
                              ent = get_empresa(r['pais'], r['items'])
-                             sub = sum(x['Total'] for x in r['items'])
-                             tn, tv = get_impuestos(r['pais'], sub, sub)
-                             calc = {'subtotal':sub, 'fee':0, 'tax_name':tn, 'tax_val':tv, 'total':r['total']}
+                             sub = sum(x['Total'] for x in r['items']); tn, tv = get_impuestos(r['pais'], sub, sub); calc = {'subtotal':sub, 'fee':0, 'tax_name':tn, 'tax_val':tv, 'total':r['total']}
                              pdf = generar_pdf_final(ent, cli, r['items'], calc, "COTIZACIÓN", ext)
                              b64 = base64.b64encode(pdf).decode('latin-1')
                              pdf_links = f'<a href="data:application/pdf;base64,{b64}" download="Cot_{r["id"]}.pdf">📄 Ver PDF Cotización</a>'
                         st.markdown(pdf_links, unsafe_allow_html=True)
                     else:
-                        st.warning("⚠️ Vista de PDF no disponible (cotización antigua sin detalle).")
+                        st.warning("⚠️ Vista de PDF no disponible (cotización antigua).")
 
                     c1, c2, c3, c4 = st.columns(4)
-                    new_oc = c1.text_input("Orden de Compra (OC)", value=r.get('oc',''), key=f"oc_{r['id']}")
-                    new_hes_num = c2.text_input("N° HES / MIGO", value=r.get('hes_num',''), key=f"hnum_{r['id']}")
+                    new_oc = c1.text_input("OC", value=r.get('oc',''), key=f"oc_{r['id']}")
+                    new_hes_num = c2.text_input("N° HES", value=r.get('hes_num',''), key=f"hnum_{r['id']}")
                     new_inv = c3.text_input("N° Factura", key=f"inv_{r['id']}")
-                    
-                    if c4.button("Emitir Factura", key=f"bill_{r['id']}"):
+                    if c4.button("Emitir", key=f"bill_{r['id']}"):
                         if not new_inv: st.error("Falta N° Factura"); continue
                         st.session_state['cotizaciones'].at[i, 'oc'] = new_oc
                         st.session_state['cotizaciones'].at[i, 'hes_num'] = new_hes_num
                         st.session_state['cotizaciones'].at[i, 'factura'] = new_inv
                         st.session_state['cotizaciones'].at[i, 'estado'] = 'Facturada'
                         if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
-                            st.success(f"Factura {new_inv} guardada! Movida al historial."); time.sleep(1); st.rerun()
+                            st.success(f"Factura {new_inv} guardada!"); time.sleep(1); st.rerun()
                     st.divider()
 
     with tab_collection:
         st.subheader("Historial y Cobranza")
         billed = df[df['estado'] == 'Facturada'].copy()
-        if billed.empty:
-            st.info("No hay historial de facturación.")
+        if billed.empty: st.info("No hay historial.")
         else:
             st.dataframe(billed[['fecha', 'id', 'empresa', 'total', 'moneda', 'oc', 'hes_num', 'factura', 'pago']], use_container_width=True)
             st.markdown("---")
             st.subheader("🔧 Gestión de Factura (Edición/Anulación)")
             
-            # Selector de factura para editar
             inv_list = billed['factura'].unique().tolist()
             sel_inv = st.selectbox("Seleccionar N° Factura", inv_list)
             
             if sel_inv:
-                # Buscar índice real en el dataframe original usando la factura seleccionada
                 row_idx = df[df['factura'] == sel_inv].index[0]
                 r_sel = st.session_state['cotizaciones'].iloc[row_idx]
                 
@@ -580,14 +575,24 @@ def modulo_dashboard():
     tab_gen, tab_kpi, tab_lead, tab_sale, tab_bill = st.tabs(["📊 General", "🎯 Metas y Desempeño", "📇 Leads (Funnel)", "📈 Cierre Ventas", "💵 Facturación"])
     
     with tab_gen:
-        c1, c2, c3, c4 = st.columns(4)
+        # Aquí está el cambio solicitado: Filtrar solo abiertas para el KPI
+        df_open = df_cots[df_cots['estado'].isin(['Enviada', 'Aprobada'])]
+        monto_abierto = df_open['total'].sum() if not df_open.empty else 0
+        cant_abiertas = len(df_open)
+        
+        c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Total Leads", len(df_leads))
-        c2.metric("Total Cotizado", f"${df_cots['total'].sum():,.0f}" if not df_cots.empty else "$0")
+        c2.metric("Cant. Abiertas", cant_abiertas) # Nuevo KPI
+        c3.metric("Monto en Juego (Open)", f"${monto_abierto:,.0f}") # Modificado
+        
+        # Win Rate calculation
         total_ops = len(df_cots); won_ops = len(df_cots[df_cots['estado'].isin(['Aprobada','Facturada'])])
         win_rate = (won_ops/total_ops*100) if total_ops > 0 else 0
-        c3.metric("Tasa de Cierre", f"{win_rate:.1f}%")
+        c4.metric("Tasa de Cierre", f"{win_rate:.1f}%")
+        
         facturado = df_cots[df_cots['estado']=='Facturada']['total'].sum() if not df_cots.empty else 0
-        c4.metric("Total Facturado", f"${facturado:,.0f}")
+        c5.metric("Total Facturado", f"${facturado:,.0f}")
+        
         st.divider()
         if not df_cots.empty:
             fig = px.pie(df_cots, names='estado', title="Distribución Estado Cotizaciones")
@@ -599,7 +604,6 @@ def modulo_dashboard():
         my_team = user_data.get('equipo', 'Sin Equipo')
         
         df_my_sales = df_cots[(df_cots['vendedor'] == user_data.get('name','')) & (df_cots['estado'] == 'Facturada')]
-        
         def get_cat(m): return clasificar_cliente(m)
         if not df_my_sales.empty:
             df_my_sales['Categoria'] = df_my_sales['total'].apply(get_cat)
@@ -607,43 +611,31 @@ def modulo_dashboard():
             cnt_big = len(df_my_sales[df_my_sales['Categoria']=='Grande'])
             cnt_mid = len(df_my_sales[df_my_sales['Categoria']=='Mediano'])
             cnt_sml = len(df_my_sales[df_my_sales['Categoria']=='Chico'])
-        else:
-            my_rev = 0; cnt_big=0; cnt_mid=0; cnt_sml=0
+        else: my_rev = 0; cnt_big=0; cnt_mid=0; cnt_sml=0
 
         goal_rev = float(user_data.get('meta_rev', 0))
-        goal_big = int(user_data.get('meta_cli_big', 0))
-        goal_mid = int(user_data.get('meta_cli_mid', 0))
-        goal_sml = int(user_data.get('meta_cli_small', 0))
+        goal_big = int(user_data.get('meta_cli_big', 0)); goal_mid = int(user_data.get('meta_cli_mid', 0)); goal_sml = int(user_data.get('meta_cli_small', 0))
 
         c1, c2 = st.columns(2)
         with c1:
             st.markdown(f"#### 👤 Mis Resultados ({user_data.get('name','')})")
-            if goal_rev > 0:
-                st.progress(min(my_rev/goal_rev, 1.0), text=f"Facturación: ${my_rev:,.0f} / ${goal_rev:,.0f} ({my_rev/goal_rev*100:.1f}%)")
-            else: st.info("Sin meta de facturación asignada.")
-            
+            if goal_rev > 0: st.progress(min(my_rev/goal_rev, 1.0), text=f"Facturación: ${my_rev:,.0f} / ${goal_rev:,.0f} ({my_rev/goal_rev*100:.1f}%)")
+            else: st.info("Sin meta asignada.")
             c_a, c_b, c_c = st.columns(3)
-            c_a.metric("Grandes (>20k)", f"{cnt_big}/{goal_big}", delta="OK" if cnt_big >= goal_big else f"-{goal_big-cnt_big}")
-            c_b.metric("Medianos", f"{cnt_mid}/{goal_mid}", delta="OK" if cnt_mid >= goal_mid else f"-{goal_mid-cnt_mid}")
-            c_c.metric("Chicos", f"{cnt_sml}/{goal_sml}", delta="OK" if cnt_sml >= goal_sml else f"-{goal_sml-cnt_sml}")
+            c_a.metric("Grandes", f"{cnt_big}/{goal_big}"); c_b.metric("Medianos", f"{cnt_mid}/{goal_mid}"); c_c.metric("Chicos", f"{cnt_sml}/{goal_sml}")
 
         with c2:
             st.markdown(f"#### 🏆 Resultados Equipo: {my_team}")
-            team_goal_rev = 0
-            team_members = []
+            team_goal_rev = 0; team_members = []
             for u, d in users.items():
-                if d.get('equipo') == my_team:
-                    team_goal_rev += float(d.get('meta_rev', 0))
-                    team_members.append(d.get('name',''))
-            
+                if d.get('equipo') == my_team: team_goal_rev += float(d.get('meta_rev', 0)); team_members.append(d.get('name',''))
             df_team_sales = df_cots[(df_cots['vendedor'].isin(team_members)) & (df_cots['estado'] == 'Facturada')]
             team_rev = df_team_sales['total'].sum() if not df_team_sales.empty else 0
-            
             if team_goal_rev > 0:
                 st.progress(min(team_rev/team_goal_rev, 1.0), text=f"Meta Equipo: ${team_rev:,.0f} / ${team_goal_rev:,.0f}")
                 fig_team = go.Figure(go.Indicator(mode = "gauge+number+delta", value = team_rev, domain = {'x': [0, 1], 'y': [0, 1]}, title = {'text': "Avance Equipo"}, delta = {'reference': team_goal_rev}, gauge = {'axis': {'range': [None, team_goal_rev*1.2]}, 'bar': {'color': "#003366"}}))
                 st.plotly_chart(fig_team, use_container_width=True)
-            else: st.info("El equipo no tiene metas configuradas.")
+            else: st.info("Sin metas de equipo.")
 
     with tab_lead:
         if not df_leads.empty:
@@ -713,10 +705,8 @@ def modulo_admin():
             new_pass = st.text_input("Contraseña Inicial", type="password")
             
             if st.form_submit_button("Crear Usuario"):
-                if not new_email or not new_pass:
-                    st.error("Correo y contraseña son obligatorios")
-                elif new_email in users:
-                    st.error("Este usuario ya existe")
+                if not new_email or not new_pass: st.error("Correo y contraseña son obligatorios")
+                elif new_email in users: st.error("Este usuario ya existe")
                 else:
                     hashed = bcrypt.hashpw(new_pass.encode(), bcrypt.gensalt()).decode()
                     users[new_email] = {

@@ -113,12 +113,18 @@ def login_page():
             u = st.text_input("Usuario"); p = st.text_input("Contraseña", type="password")
             if st.form_submit_button("Entrar", use_container_width=True):
                 user = st.session_state['users_db'].get(u)
-                if user and bcrypt.checkpw(p.encode(), user.get('password_hash','').encode()):
-                    st.session_state['auth_status'] = True
-                    st.session_state['current_user'] = u
-                    st.session_state['current_role'] = user['role']
-                    st.rerun()
-                else: st.error("Acceso denegado")
+                if user:
+                    try:
+                        # Compatibilidad con hash antiguo o nuevo
+                        stored_hash = user.get('password_hash', '')
+                        if bcrypt.checkpw(p.encode(), stored_hash.encode()):
+                            st.session_state['auth_status'] = True
+                            st.session_state['current_user'] = u
+                            st.session_state['current_role'] = user.get('role', 'Comercial')
+                            st.rerun()
+                        else: st.error("Contraseña incorrecta")
+                    except: st.error("Error de validación")
+                else: st.error("Usuario no encontrado")
 
 def logout(): st.session_state.clear(); st.rerun()
 
@@ -592,8 +598,97 @@ def modulo_dashboard():
             st.plotly_chart(fig_pay, use_container_width=True)
         else: st.info("No hay facturas emitidas.")
 
+# ==============================================================================
+# MÓDULO NUEVO: ADMINISTRACIÓN (Usuarios, Roles, Metas)
+# ==============================================================================
 def modulo_admin():
-    st.title("Admin Users"); st.dataframe(pd.DataFrame(st.session_state['users_db']).T)
+    st.title("👥 Administración de Usuarios")
+    
+    users = st.session_state['users_db']
+    
+    tab_list, tab_create = st.tabs(["⚙️ Gestionar Usuarios", "➕ Crear Nuevo Usuario"])
+    
+    with tab_create:
+        st.subheader("Alta de Nuevo Usuario")
+        with st.form("new_user_form"):
+            new_email = st.text_input("Correo Electrónico (Usuario)")
+            new_name = st.text_input("Nombre Completo")
+            new_role = st.selectbox("Rol", ["Comercial", "Finanzas", "Super Admin"])
+            new_pass = st.text_input("Contraseña Inicial", type="password")
+            
+            if st.form_submit_button("Crear Usuario"):
+                if not new_email or not new_pass:
+                    st.error("Correo y contraseña son obligatorios")
+                elif new_email in users:
+                    st.error("Este usuario ya existe")
+                else:
+                    hashed = bcrypt.hashpw(new_pass.encode(), bcrypt.gensalt()).decode()
+                    users[new_email] = {"name": new_name, "role": new_role, "password_hash": hashed}
+                    if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
+                        st.session_state['users_db'] = users
+                        st.success(f"Usuario {new_email} creado exitosamente")
+                        time.sleep(1); st.rerun()
+                    else: st.error("Error al guardar en base de datos")
+
+    with tab_list:
+        st.subheader("Usuarios Registrados")
+        
+        # Convertir a lista para mostrar en tabla limpia (sin hash)
+        clean_users = []
+        for u_email, u_data in users.items():
+            clean_users.append({
+                "Email": u_email,
+                "Nombre": u_data.get('name', ''),
+                "Rol": u_data.get('role', ''),
+                "Meta Anual": u_data.get('meta_anual', '-')
+            })
+        st.dataframe(pd.DataFrame(clean_users), use_container_width=True)
+        
+        st.markdown("---")
+        st.subheader("✏️ Editar Usuario")
+        
+        edit_user = st.selectbox("Seleccionar Usuario a Editar", list(users.keys()))
+        
+        if edit_user:
+            user_data = users[edit_user]
+            with st.expander(f"Opciones para {edit_user}", expanded=True):
+                c1, c2 = st.columns(2)
+                
+                # 1. CAMBIAR ROL
+                new_role_edit = c1.selectbox("Rol del Usuario", ["Comercial", "Finanzas", "Super Admin"], index=["Comercial", "Finanzas", "Super Admin"].index(user_data.get('role', 'Comercial')))
+                
+                # 2. META ANUAL (Solo si es Comercial)
+                meta_val = 0.0
+                if new_role_edit == "Comercial":
+                    meta_val = float(user_data.get('meta_anual', 0))
+                    new_meta = c2.number_input("Meta Anual (USD/Moneda Base)", value=meta_val, step=1000.0)
+                else:
+                    new_meta = 0
+                    c2.info("Las metas solo aplican al rol Comercial.")
+
+                if st.button("💾 Guardar Cambios de Perfil"):
+                    users[edit_user]['role'] = new_role_edit
+                    if new_role_edit == "Comercial":
+                        users[edit_user]['meta_anual'] = new_meta
+                    
+                    if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
+                        st.session_state['users_db'] = users
+                        st.success("Perfil actualizado")
+                        time.sleep(1); st.rerun()
+                
+                st.divider()
+                
+                # 3. REESTABLECER CLAVE
+                st.warning("⚠️ Zona de Seguridad: Reestablecer Contraseña")
+                new_pass_reset = st.text_input("Nueva Contraseña", type="password", key="reset_pass")
+                if st.button("🔒 Cambiar Contraseña"):
+                    if new_pass_reset:
+                        new_hash = bcrypt.hashpw(new_pass_reset.encode(), bcrypt.gensalt()).decode()
+                        users[edit_user]['password_hash'] = new_hash
+                        if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
+                            st.success("Contraseña actualizada correctamente")
+                    else:
+                        st.error("Ingresa una contraseña válida")
 
 # --- MENU LATERAL ---
 with st.sidebar:

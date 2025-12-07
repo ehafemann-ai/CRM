@@ -38,6 +38,7 @@ def github_get_json(url_key):
         if r.status_code == 200:
             content = base64.b64decode(r.json()['content']).decode('utf-8')
             return json.loads(content), r.json()['sha']
+        # Retornos seguros si no existe archivo
         if "users" in url_key: return ({}, None)
         return ([], None) 
     except: return ([], None) if "users" not in url_key else ({}, None)
@@ -77,6 +78,7 @@ if 'cotizaciones' not in st.session_state:
     cols = ['id', 'fecha', 'empresa', 'pais', 'total', 'moneda', 'estado', 'vendedor', 'oc', 'factura', 'pago']
     if cots and isinstance(cots, list):
         df = pd.DataFrame(cots)
+        # Asegurar columnas nuevas en datos viejos
         for c in cols:
             if c not in df.columns: df[c] = ""
         st.session_state['cotizaciones'] = df
@@ -191,7 +193,9 @@ def get_impuestos(pais, sub, eva):
 def get_empresa(pais, items):
     if pais=="Brasil": return EMPRESAS["Brasil"]
     if pais in ["Perú","Peru"]: return EMPRESAS["Peru"]
-    if pais=="Chile": return EMPRESAS["Chile_Pruebas"] if any(i['Ítem']=='Evaluación' for i in items) else EMPRESAS["Chile_Servicios"]
+    if pais=="Chile": 
+        # Default para lógica simple, la lógica split va en el módulo
+        return EMPRESAS["Chile_Pruebas"] if any(i['Ítem']=='Evaluación' for i in items) else EMPRESAS["Chile_Servicios"]
     return EMPRESAS["Latam"]
 
 # --- PDF ENGINE ---
@@ -206,7 +210,7 @@ class PDF(FPDF):
         self.cell(0, 10, 'TalentPro Digital System', 0, 0, 'C')
 
 def generar_pdf_final(emp, cli, items, calc, titulo, extras):
-    pdf = PDF(); pdf.tit=titulo; pdf.tit_doc=titulo; pdf.add_page()
+    pdf = PDF(); pdf.tit_doc=titulo; pdf.add_page()
     pdf.set_font("Arial",'B',10); pdf.set_text_color(0,51,102); pdf.cell(95,5,emp['Nombre'],0,0)
     pdf.set_text_color(100); pdf.cell(95,5,"Facturar a:",0,1)
     pdf.set_font("Arial",'',9); pdf.set_text_color(50); y=pdf.get_y()
@@ -309,6 +313,9 @@ def modulo_crm():
         if sel:
             df = st.session_state['cotizaciones']; dfc = df[df['empresa']==sel]
             tot = dfc['total'].sum() if not dfc.empty else 0
+            # Recuperamos KPI de facturación para este cliente específico
+            fac_cli = dfc[dfc['estado']=='Facturada']['total'].sum() if not dfc.empty else 0
+            
             lead_info = next((l for l in st.session_state['leads_db'] if l['Cliente'] == sel), None)
             
             st.markdown(f"### 🏢 {sel}")
@@ -321,7 +328,11 @@ def modulo_crm():
                 st.write(f"**Dolor:** {lead_info.get('Expectativa','')}")
                 st.divider()
 
-            c1,c2 = st.columns(2); c1.metric("Total Cotizado", f"${tot:,.0f}"); c2.metric("# Cotizaciones", len(dfc))
+            c1,c2,c3 = st.columns(3)
+            c1.metric("Total Cotizado", f"${tot:,.0f}")
+            c2.metric("Total Facturado", f"${fac_cli:,.0f}")
+            c3.metric("# Cotizaciones", len(dfc))
+            
             st.dataframe(dfc[['fecha','id','pais','total','estado','factura','pago']], use_container_width=True)
 
 def modulo_cotizador():
@@ -367,21 +378,55 @@ def modulo_cotizador():
             fee=st.checkbox("Fee 10%",False); bnk=st.number_input("Bank",0.0); dsc=st.number_input("Desc",0.0)
             vfee=eva*0.10 if fee else 0; tn,tv=get_impuestos(ps,sub,eva); fin=sub+vfee+tv+bnk-dsc
             st.metric("TOTAL",f"{ctx['mon']} {fin:,.2f}")
+            
             if st.button("GUARDAR", type="primary"):
                 if not emp: st.error("Falta Empresa"); return
                 nid=f"TP-{random.randint(1000,9999)}"; cli={'empresa':emp,'contacto':con,'email':ema}
                 ext={'fee':vfee,'bank':bnk,'desc':dsc,'pais':ps,'id':nid}
-                ent=get_empresa(ps,st.session_state['carrito'])
-                calc={'subtotal':sub,'fee':vfee,'tax_name':tn,'tax_val':tv,'total':fin}
-                pdf=generar_pdf_final(ent,cli,st.session_state['carrito'],calc,txt['quote'],ext)
-                b64=base64.b64encode(pdf).decode('latin-1')
-                st.markdown(f'<a href="data:application/pdf;base64,{b64}" download="Cot_{nid}.pdf">📄 Descargar PDF</a>', unsafe_allow_html=True)
                 
+                # --- LOGICA SPLIT CHILE ---
+                prod_items = [x for x in st.session_state['carrito'] if x['Ítem']=='Evaluación']
+                serv_items = [x for x in st.session_state['carrito'] if x['Ítem']=='Servicio']
+                links_html = ""
+                
+                # Caso: Chile con mezcla -> Dos cotizaciones
+                if ps == "Chile" and prod_items and serv_items:
+                    # 1. Productos (SpA)
+                    sub_p = sum(x['Total'] for x in prod_items)
+                    fee_p = sub_p*0.10 if fee else 0
+                    tax_p = sub_p*0.19
+                    tot_p = sub_p + fee_p + tax_p
+                    calc_p = {'subtotal':sub_p, 'fee':fee_p, 'tax_name':"IVA (19%)", 'tax_val':tax_p, 'total':tot_p}
+                    pdf_p = generar_pdf_final(EMPRESAS['Chile_Pruebas'], cli, prod_items, calc_p, txt['quote'], ext)
+                    b64_p = base64.b64encode(pdf_p).decode('latin-1')
+                    links_html += f'<a href="data:application/pdf;base64,{b64_p}" download="Cot_{nid}_Productos.pdf">📄 Descargar Cotización (Productos - SpA)</a><br><br>'
+
+                    # 2. Servicios (Ltda)
+                    sub_s = sum(x['Total'] for x in serv_items)
+                    tot_s = sub_s + bnk - dsc
+                    calc_s = {'subtotal':sub_s, 'fee':0, 'tax_name':"", 'tax_val':0, 'total':tot_s}
+                    pdf_s = generar_pdf_final(EMPRESAS['Chile_Servicios'], cli, serv_items, calc_s, txt['quote'], ext)
+                    b64_s = base64.b64encode(pdf_s).decode('latin-1')
+                    links_html += f'<a href="data:application/pdf;base64,{b64_s}" download="Cot_{nid}_Servicios.pdf">📄 Descargar Cotización (Servicios - Ltda)</a>'
+                    st.success("✅ Generadas 2 cotizaciones separadas (SpA y Servicios)")
+                
+                # Caso Normal
+                else:
+                    ent = get_empresa(ps, st.session_state['carrito'])
+                    calc = {'subtotal':sub, 'fee':vfee, 'tax_name':tn, 'tax_val':tv, 'total':fin}
+                    pdf = generar_pdf_final(ent, cli, st.session_state['carrito'], calc, txt['quote'], ext)
+                    b64 = base64.b64encode(pdf).decode('latin-1')
+                    links_html = f'<a href="data:application/pdf;base64,{b64}" download="Cot_{nid}.pdf">📄 Descargar PDF</a>'
+                    st.success("✅ Cotización generada")
+
+                st.markdown(links_html, unsafe_allow_html=True)
+                
+                # Guardar en DB
                 row = {'id':nid, 'fecha':str(datetime.now().date()), 'empresa':emp, 'pais':ps, 'total':fin, 'moneda':ctx['mon'], 'estado':'Enviada', 'vendedor':ven, 'oc':'', 'factura':'', 'pago':'Pendiente'}
                 st.session_state['cotizaciones'] = pd.concat([st.session_state['cotizaciones'], pd.DataFrame([row])], ignore_index=True)
                 if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
-                    st.success("✅ Guardada en GitHub"); st.session_state['carrito']=[]; time.sleep(1)
-                else: st.warning("⚠️ PDF OK, falló GitHub")
+                    st.info("Guardado en Base de Datos"); st.session_state['carrito']=[]; time.sleep(2)
+                else: st.warning("Error al sincronizar con GitHub")
         with cL: 
             if st.button("Limpiar"): st.session_state['carrito']=[]; st.rerun()
 
@@ -424,25 +469,19 @@ def modulo_seguimiento():
                     st.success("Actualizado"); time.sleep(1); st.rerun()
 
 # ==============================================================================
-# MÓDULO DASHBOARD (ARREGLADO)
+# MÓDULO DASHBOARD (CON SANITIZACIÓN DE DATOS)
 # ==============================================================================
 def modulo_dashboard():
     st.title("📊 Dashboards & Analytics")
     
-    # --- SANITIZACIÓN DE DATOS LEADS ---
-    # Corrección del error: Si la lista de leads tiene diccionarios viejos sin "Origen",
-    # Pandas crea el DF con NaNs o falla al plotear. Aquí forzamos las columnas.
+    # Pre-procesamiento para evitar errores si faltan columnas en datos viejos
     if st.session_state['leads_db']:
         df_leads = pd.DataFrame(st.session_state['leads_db'])
-        # Columnas críticas para los gráficos
         cols_leads_req = ['Origen', 'Etapa', 'Industria']
         for col in cols_leads_req:
-            if col not in df_leads.columns:
-                df_leads[col] = "Sin Dato"
-        # Rellenar NaNs por si existen columnas pero con valores vacíos
+            if col not in df_leads.columns: df_leads[col] = "Sin Dato"
         df_leads = df_leads.fillna("Sin Dato")
-    else:
-        df_leads = pd.DataFrame()
+    else: df_leads = pd.DataFrame()
 
     df_cots = st.session_state['cotizaciones']
     
@@ -477,17 +516,13 @@ def modulo_dashboard():
                 funnel_data.columns = ['Etapa', 'Cantidad']
                 fig_funnel = px.funnel(funnel_data, x='Cantidad', y='Etapa', title="Embudo de Ventas")
                 st.plotly_chart(fig_funnel, use_container_width=True)
-            
             with c2:
                 st.subheader("Leads por Origen")
-                # Aquí fallaba antes, ahora con la sanitización ya no debería
                 fig_source = px.bar(df_leads, x='Origen', title="Fuentes de Leads", color='Origen')
                 st.plotly_chart(fig_source, use_container_width=True)
-                
             st.subheader("Leads por Industria")
             st.bar_chart(df_leads['Industria'].value_counts())
-        else:
-            st.info("No hay datos de leads para generar reportes.")
+        else: st.info("No hay datos de leads.")
 
     # 3. VENTAS (CIERRE)
     with tab_sale:
@@ -506,16 +541,14 @@ def modulo_dashboard():
                 st.subheader("Performance por Vendedor")
                 fig_bar = px.bar(df_sales, x='vendedor', y='total', color='pais', title="Ventas por Ejecutivo")
                 st.plotly_chart(fig_bar, use_container_width=True)
-            else:
-                st.info("Aún no hay ventas cerradas.")
-                
+            else: st.info("Aún no hay ventas cerradas.")
+            
             st.divider()
             st.subheader("Actividad de Cotización Total")
             act_time = df_cots.groupby('Mes')['total'].count().reset_index()
             fig_act = px.bar(act_time, x='Mes', y='total', title="Cantidad de Cotizaciones Enviadas")
             st.plotly_chart(fig_act, use_container_width=True)
-        else:
-            st.info("Sin datos de cotizaciones.")
+        else: st.info("Sin datos de cotizaciones.")
 
     # 4. FACTURACIÓN
     with tab_bill:
@@ -534,8 +567,7 @@ def modulo_dashboard():
             fig_pay = px.pie(df_inv, names='pago', title="Status de Cobranza", hole=0.4, 
                              color_discrete_map={'Pagada':'green', 'Pendiente':'orange', 'Vencida':'red'})
             st.plotly_chart(fig_pay, use_container_width=True)
-        else:
-            st.info("No hay facturas emitidas.")
+        else: st.info("No hay facturas emitidas.")
 
 def modulo_finanzas():
     st.title("💵 Gestión de Cobranza (Tabla)")

@@ -54,6 +54,12 @@ def github_push_json(url_key, data_dict, sha):
         return r.status_code in [200, 201]
     except: return False
 
+def sync_users_after_update():
+    """Función auxiliar para recargar usuarios y SHA después de un cambio"""
+    users, sha = github_get_json('url_usuarios')
+    st.session_state['users_db'] = users
+    st.session_state['users_sha'] = sha
+
 # ==============================================================================
 # 2. INICIALIZACIÓN DE ESTADO
 # ==============================================================================
@@ -109,9 +115,15 @@ def login_page():
         st.markdown("<br><br>", unsafe_allow_html=True)
         if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=300)
         st.markdown("### Acceso Seguro ERP")
-        with st.form("login"):
-            u = st.text_input("Usuario"); p = st.text_input("Contraseña", type="password")
-            if st.form_submit_button("Entrar", use_container_width=True):
+        
+        # Corrección Doble Enter: Usamos keys en los inputs y validamos fuera si es posible,
+        # pero el form es lo más limpio. Aseguramos que el st.error se limpie.
+        with st.form("login_form"):
+            u = st.text_input("Usuario", key="login_user")
+            p = st.text_input("Contraseña", type="password", key="login_pass")
+            submit = st.form_submit_button("Entrar", use_container_width=True)
+            
+            if submit:
                 user = st.session_state['users_db'].get(u)
                 if user:
                     try:
@@ -120,10 +132,15 @@ def login_page():
                             st.session_state['auth_status'] = True
                             st.session_state['current_user'] = u
                             st.session_state['current_role'] = user.get('role', 'Comercial')
+                            st.success("Acceso Correcto")
+                            time.sleep(0.2)
                             st.rerun()
-                        else: st.error("Contraseña incorrecta")
-                    except: st.error("Error de validación")
-                else: st.error("Usuario no encontrado")
+                        else:
+                            st.error("⚠️ Contraseña incorrecta")
+                    except Exception as e:
+                        st.error(f"Error de validación: {e}")
+                else:
+                    st.error("⚠️ Usuario no encontrado")
 
 def logout(): st.session_state.clear(); st.rerun()
 
@@ -676,7 +693,7 @@ def modulo_admin():
                         "meta_rev": 0, "meta_cli_big": 0, "meta_cli_mid": 0, "meta_cli_small": 0
                     }
                     if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
-                        st.session_state['users_db'] = users
+                        sync_users_after_update() # Sync immediate
                         st.success(f"Usuario {new_email} creado exitosamente"); time.sleep(1); st.rerun()
                     else: st.error("Error al guardar")
 
@@ -717,7 +734,8 @@ def modulo_admin():
                         'meta_rev': m_rev, 'meta_cli_big': m_big, 'meta_cli_mid': m_mid, 'meta_cli_small': m_sml
                     })
                     if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
-                        st.session_state['users_db'] = users; st.success("Perfil actualizado"); time.sleep(1); st.rerun()
+                        sync_users_after_update()
+                        st.success("Perfil actualizado"); time.sleep(1); st.rerun()
                 
                 st.divider()
                 st.warning("⚠️ Zona Seguridad")
@@ -726,6 +744,7 @@ def modulo_admin():
                     if pass_rst:
                         users[edit_user]['password_hash'] = bcrypt.hashpw(pass_rst.encode(), bcrypt.gensalt()).decode()
                         if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
+                            sync_users_after_update()
                             st.success("Clave cambiada")
                 
                 st.markdown("### 🚨 Zona de Peligro")
@@ -735,7 +754,7 @@ def modulo_admin():
                     if st.button(f"🗑️ Eliminar a {edit_user}", type="primary"):
                         del users[edit_user]
                         if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
-                            st.session_state['users_db'] = users
+                            sync_users_after_update()
                             st.success(f"Usuario {edit_user} eliminado.")
                             time.sleep(1); st.rerun()
 

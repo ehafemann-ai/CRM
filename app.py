@@ -282,11 +282,8 @@ def generar_pdf_final(emp, cli, items, calc, idioma_code, extras):
     if calc['fee']>0: r(T['fee'], calc['fee'])
     if calc['tax_val']>0: r(calc['tax_name'], calc['tax_val'])
     if extras.get('bank',0)>0: r(T['bank'], extras['bank'])
-    
-    # Nombre Personalizado del Descuento
     lbl_dsc = extras.get('desc_name') if extras.get('desc_name') else T['discount']
     if extras.get('desc',0)>0: r(lbl_dsc, -extras['desc'])
-    
     pdf.ln(1); r(T['total'].upper(), calc['total'], True); pdf.ln(10)
     pdf.set_font("Arial",'I',8); pdf.set_text_color(80)
     if emp['Nombre']==EMPRESAS['Latam']['Nombre']: pdf.multi_cell(0,4,T['legal_intl'].format(pais=extras['pais']),0,'L'); pdf.ln(3)
@@ -386,47 +383,23 @@ def modulo_cotizador():
 
     if st.session_state['carrito']:
         st.markdown("---")
-        # -----------------------------------------------------
-        # NUEVO: EDITOR INTERACTIVO (Data Editor)
-        # -----------------------------------------------------
         df_cart = pd.DataFrame(st.session_state['carrito'])
-        st.caption("📝 Puedes editar la descripción, cantidad o precio directamente en la tabla. Usa la tecla SUPR para eliminar filas.")
-        
-        edited_cart = st.data_editor(
-            df_cart,
-            num_rows="dynamic",
-            use_container_width=True,
-            column_config={
-                "Total": st.column_config.NumberColumn(format="$%.2f"),
-                "Unit": st.column_config.NumberColumn(format="$%.2f")
-            },
-            key="cart_editor"
-        )
-        
-        # Actualizamos el estado con lo editado
+        st.caption("📝 Puedes editar la descripción, cantidad o precio directamente en la tabla.")
+        edited_cart = st.data_editor(df_cart, num_rows="dynamic", use_container_width=True, column_config={"Total": st.column_config.NumberColumn(format="$%.2f"), "Unit": st.column_config.NumberColumn(format="$%.2f")}, key="cart_editor")
         st.session_state['carrito'] = edited_cart.to_dict('records')
-        
-        # Recalcular totales basados en la edición
         sub = sum(item['Total'] for item in st.session_state['carrito'])
         eva = sum(item['Total'] for item in st.session_state['carrito'] if item['Ítem']=='Evaluación')
-        
         cL, cR = st.columns([3,1])
         with cR:
             fee=st.checkbox("Fee 10%",False); bnk=st.number_input("Bank",0.0)
-            
-            # NUEVO: NOMBRE DEL DESCUENTO
             dsc_name = st.text_input("Glosa Descuento", value="Descuento")
             dsc = st.number_input("Monto Desc", 0.0)
-            
             vfee=eva*0.10 if fee else 0; tn,tv=get_impuestos(ps,sub,eva); fin=sub+vfee+tv+bnk-dsc
             st.metric("TOTAL",f"{ctx['mon']} {fin:,.2f}")
-            
             if st.button("GUARDAR", type="primary"):
                 if not emp: st.error("Falta Empresa"); return
                 nid=f"TP-{random.randint(1000,9999)}"; cli={'empresa':emp,'contacto':con,'email':ema}
-                # Guardamos el nombre del descuento en los extras
                 ext={'fee':vfee,'bank':bnk,'desc':dsc,'desc_name':dsc_name, 'pais':ps,'id':nid}
-                
                 prod_items = [x for x in st.session_state['carrito'] if x['Ítem']=='Evaluación']
                 serv_items = [x for x in st.session_state['carrito'] if x['Ítem']=='Servicio']
                 links_html = ""
@@ -595,38 +568,64 @@ def modulo_finanzas():
 
 def modulo_dashboard():
     st.title("📊 Dashboards & Analytics")
+    # --- FILTRO TEMPORAL ---
+    st.sidebar.markdown("### 📅 Filtro de Tiempo")
+    
+    # Asegurar conversión de fechas en DataFrames
+    df_cots = st.session_state['cotizaciones']
+    if not df_cots.empty and 'fecha_dt' not in df_cots.columns:
+        df_cots['fecha_dt'] = pd.to_datetime(df_cots['fecha'])
+        df_cots['Año'] = df_cots['fecha_dt'].dt.year
+        df_cots['Mes'] = df_cots['fecha_dt'].dt.month_name()
+
     if st.session_state['leads_db']:
         df_leads = pd.DataFrame(st.session_state['leads_db'])
-        for col in ['Origen', 'Etapa', 'Industria']:
-            if col not in df_leads.columns: df_leads[col] = "Sin Dato"
-        df_leads = df_leads.fillna("Sin Dato")
+        if 'Fecha' in df_leads.columns and not df_leads.empty:
+            df_leads['fecha_dt'] = pd.to_datetime(df_leads['Fecha'])
+            df_leads['Año'] = df_leads['fecha_dt'].dt.year
+            df_leads['Mes'] = df_leads['fecha_dt'].dt.month_name()
     else: df_leads = pd.DataFrame()
-    df_cots = st.session_state['cotizaciones']
+
+    # Selectores
+    all_years = sorted(list(set(df_cots['Año'].unique().tolist() + (df_leads['Año'].unique().tolist() if not df_leads.empty else [])))) if not df_cots.empty else [datetime.now().year]
+    selected_years = st.sidebar.multiselect("Seleccionar Años", all_years, default=[datetime.now().year])
+    
+    # Filtrar DataFrames
+    if not df_cots.empty:
+        df_cots_filtered = df_cots[df_cots['Año'].isin(selected_years)]
+    else: df_cots_filtered = df_cots
+
+    if not df_leads.empty:
+        df_leads_filtered = df_leads[df_leads['Año'].isin(selected_years)]
+    else: df_leads_filtered = df_leads
+
+    # --- DASHBOARD LOGIC (Usando DFs filtrados) ---
     users = st.session_state['users_db']
     curr_email = st.session_state['current_user']
     tab_gen, tab_kpi, tab_lead, tab_sale, tab_bill = st.tabs(["📊 General", "🎯 Metas y Desempeño", "📇 Leads (Funnel)", "📈 Cierre Ventas", "💵 Facturación"])
+    
     with tab_gen:
-        df_open = df_cots[df_cots['estado'].isin(['Enviada', 'Aprobada'])]
+        df_open = df_cots_filtered[df_cots_filtered['estado'].isin(['Enviada', 'Aprobada'])]
         monto_abierto = df_open['total'].sum() if not df_open.empty else 0
         cant_abiertas = len(df_open)
         c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Total Leads", len(df_leads))
+        c1.metric("Total Leads", len(df_leads_filtered))
         c2.metric("Cant. Abiertas", cant_abiertas) 
         c3.metric("Monto en Juego (Open)", f"${monto_abierto:,.0f}")
-        total_ops = len(df_cots); won_ops = len(df_cots[df_cots['estado'].isin(['Aprobada','Facturada'])])
+        total_ops = len(df_cots_filtered); won_ops = len(df_cots_filtered[df_cots_filtered['estado'].isin(['Aprobada','Facturada'])])
         win_rate = (won_ops/total_ops*100) if total_ops > 0 else 0
         c4.metric("Tasa de Cierre", f"{win_rate:.1f}%")
-        facturado = df_cots[df_cots['estado']=='Facturada']['total'].sum() if not df_cots.empty else 0
+        facturado = df_cots_filtered[df_cots_filtered['estado']=='Facturada']['total'].sum() if not df_cots_filtered.empty else 0
         c5.metric("Total Facturado", f"${facturado:,.0f}")
         st.divider()
-        if not df_cots.empty:
-            fig = px.pie(df_cots, names='estado', title="Distribución Estado Cotizaciones")
+        if not df_cots_filtered.empty:
+            fig = px.pie(df_cots_filtered, names='estado', title="Distribución Estado Cotizaciones")
             st.plotly_chart(fig, use_container_width=True)
     with tab_kpi:
         st.subheader("Desempeño Individual vs Metas")
         user_data = users.get(curr_email, {})
         my_team = user_data.get('equipo', 'Sin Equipo')
-        df_my_sales = df_cots[(df_cots['vendedor'] == user_data.get('name','')) & (df_cots['estado'] == 'Facturada')]
+        df_my_sales = df_cots_filtered[(df_cots_filtered['vendedor'] == user_data.get('name','')) & (df_cots_filtered['estado'] == 'Facturada')]
         def get_cat(m): return clasificar_cliente(m)
         if not df_my_sales.empty:
             df_my_sales['Categoria'] = df_my_sales['total'].apply(get_cat)
@@ -646,7 +645,7 @@ def modulo_dashboard():
             team_goal_rev = 0; team_members = []
             for u, d in users.items():
                 if d.get('equipo') == my_team: team_goal_rev += float(d.get('meta_rev', 0)); team_members.append(d.get('name',''))
-            df_team_sales = df_cots[(df_cots['vendedor'].isin(team_members)) & (df_cots['estado'] == 'Facturada')]
+            df_team_sales = df_cots_filtered[(df_cots_filtered['vendedor'].isin(team_members)) & (df_cots_filtered['estado'] == 'Facturada')]
             team_rev = df_team_sales['total'].sum() if not df_team_sales.empty else 0
             if team_goal_rev > 0:
                 st.progress(min(team_rev/team_goal_rev, 1.0), text=f"Meta Equipo: ${team_rev:,.0f} / ${team_goal_rev:,.0f}")
@@ -654,30 +653,30 @@ def modulo_dashboard():
                 st.plotly_chart(fig_team, use_container_width=True)
             else: st.info("Sin metas de equipo.")
     with tab_lead:
-        if not df_leads.empty:
+        if not df_leads_filtered.empty:
             c1, c2 = st.columns(2)
             with c1:
                 st.subheader("Funnel por Etapa")
-                fig_funnel = px.funnel(df_leads['Etapa'].value_counts().reset_index(), x='count', y='Etapa', title="Embudo")
+                fig_funnel = px.funnel(df_leads_filtered['Etapa'].value_counts().reset_index(), x='count', y='Etapa', title="Embudo")
                 st.plotly_chart(fig_funnel, use_container_width=True)
             with c2:
                 st.subheader("Leads por Origen")
-                fig_source = px.bar(df_leads, x='Origen', title="Fuentes", color='Origen')
+                fig_source = px.bar(df_leads_filtered, x='Origen', title="Fuentes", color='Origen')
                 st.plotly_chart(fig_source, use_container_width=True)
         else: st.info("No hay datos de leads.")
     with tab_sale:
-        if not df_cots.empty:
-            df_cots['fecha_dt'] = pd.to_datetime(df_cots['fecha'])
-            df_cots['Mes'] = df_cots['fecha_dt'].dt.strftime('%Y-%m')
-            df_sales = df_cots[df_cots['estado'].isin(['Aprobada','Facturada'])]
+        if not df_cots_filtered.empty:
+            df_sales = df_cots_filtered[df_cots_filtered['estado'].isin(['Aprobada','Facturada'])]
             if not df_sales.empty:
                 st.subheader("Evolución de Ventas")
-                fig_line = px.line(df_sales.groupby('Mes')['total'].sum().reset_index(), x='Mes', y='total', markers=True)
+                # Agrupado por Mes y Año para comparar
+                sales_time = df_sales.groupby(['Año', 'Mes'])['total'].sum().reset_index()
+                fig_line = px.line(sales_time, x='Mes', y='total', color='Año', markers=True, title="Comparativa Mensual Interanual")
                 st.plotly_chart(fig_line, use_container_width=True)
             else: st.info("Aún no hay ventas cerradas.")
         else: st.info("Sin datos.")
     with tab_bill:
-        df_inv = df_cots[df_cots['estado']=='Facturada']
+        df_inv = df_cots_filtered[df_cots_filtered['estado']=='Facturada']
         if not df_inv.empty:
             c1, c2, c3 = st.columns(3)
             tot_inv = df_inv['total'].sum()

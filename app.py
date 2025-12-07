@@ -330,6 +330,33 @@ def modulo_crm():
         if st.session_state['leads_db']: st.dataframe(pd.DataFrame(st.session_state['leads_db']), use_container_width=True)
         else: st.info("No hay leads registrados.")
     with tab2:
+        # AGREGADO: FORMULARIO PARA REGISTRAR CLIENTES EXISTENTES
+        with st.expander("➕ Registrar Cliente Existente / Histórico", expanded=False):
+             with st.form("form_existing_client"):
+                 st.info("Utiliza esto para agregar clientes que ya existen y no son prospectos nuevos.")
+                 ec1, ec2 = st.columns(2)
+                 e_name = ec1.text_input("Nombre Empresa")
+                 e_pais = ec2.selectbox("País Origen", TODOS_LOS_PAISES, key="epais")
+                 ec3, ec4 = st.columns(2)
+                 e_ind = ec3.selectbox("Industria", ["Tecnología", "Finanzas", "Retail", "Minería", "Salud", "Educación", "Otros"], key="eind")
+                 e_cont = ec4.text_input("Contacto Principal")
+                 
+                 if st.form_submit_button("Guardar Cliente en Cartera"):
+                     if e_name:
+                         # Se guarda como Lead pero con etapa y origen especiales
+                         exist_client = {
+                             "id": int(time.time()), "Cliente": e_name, "Area": "Cartera", "Pais": e_pais, 
+                             "Industria": e_ind, "Web": "", "Contactos": e_cont, 
+                             "Origen": "Base Histórica", "Etapa": "Cliente Activo", 
+                             "Expectativa": "Cliente Recurrente", "Responsable": st.session_state['current_user'], 
+                             "Fecha": str(datetime.now().date())
+                         }
+                         new_db_ex = st.session_state['leads_db'] + [exist_client]
+                         if github_push_json('url_leads', new_db_ex, st.session_state.get('leads_sha')):
+                             st.session_state['leads_db'] = new_db_ex
+                             st.success(f"Cliente {e_name} agregado a la cartera."); time.sleep(1); st.rerun()
+                     else: st.error("Falta el nombre de la empresa")
+
         l_leads = [l['Cliente'] for l in st.session_state['leads_db']]
         l_cots = st.session_state['cotizaciones']['empresa'].unique().tolist()
         todos = sorted(list(set(l_leads + l_cots)))
@@ -568,38 +595,57 @@ def modulo_finanzas():
 
 def modulo_dashboard():
     st.title("📊 Dashboards & Analytics")
-    # --- FILTRO TEMPORAL ---
     st.sidebar.markdown("### 📅 Filtro de Tiempo")
     
-    # Asegurar conversión de fechas en DataFrames
-    df_cots = st.session_state['cotizaciones']
-    if not df_cots.empty and 'fecha_dt' not in df_cots.columns:
-        df_cots['fecha_dt'] = pd.to_datetime(df_cots['fecha'])
-        df_cots['Año'] = df_cots['fecha_dt'].dt.year
-        df_cots['Mes'] = df_cots['fecha_dt'].dt.month_name()
-
+    # 1. Asegurar DataFrame de Cotizaciones y su columna Año
+    df_cots = st.session_state['cotizaciones'].copy()
+    if not df_cots.empty:
+        # Forzar conversión de fecha a datetime, manejando errores
+        df_cots['fecha_dt'] = pd.to_datetime(df_cots['fecha'], errors='coerce')
+        # Eliminar filas con fecha inválida si las hubiera
+        df_cots = df_cots.dropna(subset=['fecha_dt'])
+        if not df_cots.empty:
+            df_cots['Año'] = df_cots['fecha_dt'].dt.year
+            df_cots['Mes'] = df_cots['fecha_dt'].dt.month_name()
+    
+    # 2. Asegurar DataFrame de Leads y su columna Año
     if st.session_state['leads_db']:
         df_leads = pd.DataFrame(st.session_state['leads_db'])
-        if 'Fecha' in df_leads.columns and not df_leads.empty:
-            df_leads['fecha_dt'] = pd.to_datetime(df_leads['Fecha'])
-            df_leads['Año'] = df_leads['fecha_dt'].dt.year
-            df_leads['Mes'] = df_leads['fecha_dt'].dt.month_name()
-    else: df_leads = pd.DataFrame()
+        if 'Fecha' in df_leads.columns:
+            df_leads['fecha_dt'] = pd.to_datetime(df_leads['Fecha'], errors='coerce')
+            df_leads = df_leads.dropna(subset=['fecha_dt'])
+            if not df_leads.empty:
+                df_leads['Año'] = df_leads['fecha_dt'].dt.year
+                df_leads['Mes'] = df_leads['fecha_dt'].dt.month_name()
+        
+        # Relleno de columnas faltantes para evitar KeyErrors en gráficos
+        for col in ['Origen', 'Etapa', 'Industria']:
+            if col not in df_leads.columns: df_leads[col] = "Sin Dato"
+        df_leads = df_leads.fillna("Sin Dato")
+    else: 
+        df_leads = pd.DataFrame()
 
-    # Selectores
-    all_years = sorted(list(set(df_cots['Año'].unique().tolist() + (df_leads['Año'].unique().tolist() if not df_leads.empty else [])))) if not df_cots.empty else [datetime.now().year]
-    selected_years = st.sidebar.multiselect("Seleccionar Años", all_years, default=[datetime.now().year])
+    # 3. Construcción segura de la lista de Años para el filtro
+    years_cots = df_cots['Año'].unique().tolist() if 'Año' in df_cots.columns else []
+    years_leads = df_leads['Año'].unique().tolist() if 'Año' in df_leads.columns else []
     
-    # Filtrar DataFrames
-    if not df_cots.empty:
+    all_years = sorted(list(set(years_cots + years_leads)))
+    if not all_years:
+        all_years = [datetime.now().year]
+
+    selected_years = st.sidebar.multiselect("Seleccionar Años", all_years, default=[max(all_years)])
+    
+    # 4. Aplicar Filtro Temporal de forma segura
+    if not df_cots.empty and 'Año' in df_cots.columns:
         df_cots_filtered = df_cots[df_cots['Año'].isin(selected_years)]
-    else: df_cots_filtered = df_cots
+    else: 
+        df_cots_filtered = df_cots
 
-    if not df_leads.empty:
+    if not df_leads.empty and 'Año' in df_leads.columns:
         df_leads_filtered = df_leads[df_leads['Año'].isin(selected_years)]
-    else: df_leads_filtered = df_leads
+    else: 
+        df_leads_filtered = df_leads
 
-    # --- DASHBOARD LOGIC (Usando DFs filtrados) ---
     users = st.session_state['users_db']
     curr_email = st.session_state['current_user']
     tab_gen, tab_kpi, tab_lead, tab_sale, tab_bill = st.tabs(["📊 General", "🎯 Metas y Desempeño", "📇 Leads (Funnel)", "📈 Cierre Ventas", "💵 Facturación"])
@@ -669,9 +715,7 @@ def modulo_dashboard():
             df_sales = df_cots_filtered[df_cots_filtered['estado'].isin(['Aprobada','Facturada'])]
             if not df_sales.empty:
                 st.subheader("Evolución de Ventas")
-                # Agrupado por Mes y Año para comparar
-                sales_time = df_sales.groupby(['Año', 'Mes'])['total'].sum().reset_index()
-                fig_line = px.line(sales_time, x='Mes', y='total', color='Año', markers=True, title="Comparativa Mensual Interanual")
+                fig_line = px.line(df_sales.groupby(['Año','Mes'])['total'].sum().reset_index(), x='Mes', y='total', color='Año', markers=True)
                 st.plotly_chart(fig_line, use_container_width=True)
             else: st.info("Aún no hay ventas cerradas.")
         else: st.info("Sin datos.")
@@ -681,7 +725,6 @@ def modulo_dashboard():
             c1, c2, c3 = st.columns(3)
             tot_inv = df_inv['total'].sum()
             tot_paid = df_inv[df_inv['pago']=='Pagada']['total'].sum()
-            tot_pend = tot_inv - tot_paid
             c1.metric("Total Facturado", f"${tot_inv:,.0f}")
             c2.metric("Cobrado", f"${tot_paid:,.0f}")
             fig_pay = px.pie(df_inv, names='pago', title="Status de Cobranza", hole=0.4, color_discrete_map={'Pagada':'green', 'Pendiente':'orange', 'Vencida':'red'})

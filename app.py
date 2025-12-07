@@ -288,7 +288,8 @@ def modulo_crm():
                     if n: contacts_data.append(f"{n} ({m})")
                 st.subheader("3. Seguimiento")
                 c1, c2 = st.columns(2)
-                origen = c1.selectbox("Origen", ["Inbound", "Outbound", "Referido", "Evento"])
+                # CAMBIO SOLICITADO: OPCIONES ESPECÍFICAS DE ORIGEN
+                origen = c1.selectbox("Origen", ["SHL", "KAM TalentPRO", "Prospección del Usuario"])
                 etapa = c2.selectbox("Etapa Inicial", ["Prospección", "Contacto", "Reunión", "Propuesta"])
                 expectativa = st.text_area("Expectativa / Dolor Principal")
                 if st.form_submit_button("Guardar Lead"):
@@ -395,7 +396,6 @@ def modulo_cotizador():
                     'estado':'Enviada', 'vendedor':ven, 'oc':'', 'factura':'', 'pago':'Pendiente', 'hes':False, 'hes_num':'',
                     'items': st.session_state['carrito'], 'pdf_data': ext
                 }
-                
                 st.session_state['cotizaciones'] = pd.concat([st.session_state['cotizaciones'], pd.DataFrame([row])], ignore_index=True)
                 if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
                     st.info("Guardado en Base de Datos"); st.session_state['carrito']=[]; time.sleep(2)
@@ -412,6 +412,7 @@ def modulo_seguimiento():
     curr_user = st.session_state['current_user']
     curr_role = st.session_state.get('current_role', 'Comercial')
     
+    # Filtro por equipo
     if curr_role == 'Comercial':
         my_team = st.session_state['users_db'][curr_user].get('equipo', 'N/A')
         team_names = [u['name'] for k, u in st.session_state['users_db'].items() if u.get('equipo') == my_team]
@@ -494,26 +495,28 @@ def modulo_finanzas():
                              pdf_links = f'<a href="data:application/pdf;base64,{b64}" download="Cot_{r["id"]}.pdf">📄 Ver PDF Cotización</a>'
                         st.markdown(pdf_links, unsafe_allow_html=True)
                     else:
-                        st.warning("⚠️ Vista de PDF no disponible (cotización antigua).")
+                        st.warning("⚠️ Vista de PDF no disponible (cotización antigua sin detalle).")
 
                     c1, c2, c3, c4 = st.columns(4)
                     new_oc = c1.text_input("OC", value=r.get('oc',''), key=f"oc_{r['id']}")
                     new_hes_num = c2.text_input("N° HES", value=r.get('hes_num',''), key=f"hnum_{r['id']}")
                     new_inv = c3.text_input("N° Factura", key=f"inv_{r['id']}")
-                    if c4.button("Emitir", key=f"bill_{r['id']}"):
+                    
+                    if c4.button("Emitir Factura", key=f"bill_{r['id']}"):
                         if not new_inv: st.error("Falta N° Factura"); continue
                         st.session_state['cotizaciones'].at[i, 'oc'] = new_oc
                         st.session_state['cotizaciones'].at[i, 'hes_num'] = new_hes_num
                         st.session_state['cotizaciones'].at[i, 'factura'] = new_inv
                         st.session_state['cotizaciones'].at[i, 'estado'] = 'Facturada'
                         if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
-                            st.success(f"Factura {new_inv} guardada!"); time.sleep(1); st.rerun()
+                            st.success(f"Factura {new_inv} guardada! Movida al historial."); time.sleep(1); st.rerun()
                     st.divider()
 
     with tab_collection:
         st.subheader("Historial y Cobranza")
         billed = df[df['estado'] == 'Facturada'].copy()
-        if billed.empty: st.info("No hay historial.")
+        if billed.empty:
+            st.info("No hay historial de facturación.")
         else:
             st.dataframe(billed[['fecha', 'id', 'empresa', 'total', 'moneda', 'oc', 'hes_num', 'factura', 'pago']], use_container_width=True)
             st.markdown("---")
@@ -575,17 +578,15 @@ def modulo_dashboard():
     tab_gen, tab_kpi, tab_lead, tab_sale, tab_bill = st.tabs(["📊 General", "🎯 Metas y Desempeño", "📇 Leads (Funnel)", "📈 Cierre Ventas", "💵 Facturación"])
     
     with tab_gen:
-        # Aquí está el cambio solicitado: Filtrar solo abiertas para el KPI
         df_open = df_cots[df_cots['estado'].isin(['Enviada', 'Aprobada'])]
         monto_abierto = df_open['total'].sum() if not df_open.empty else 0
         cant_abiertas = len(df_open)
         
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Total Leads", len(df_leads))
-        c2.metric("Cant. Abiertas", cant_abiertas) # Nuevo KPI
-        c3.metric("Monto en Juego (Open)", f"${monto_abierto:,.0f}") # Modificado
+        c2.metric("Cant. Abiertas", cant_abiertas) 
+        c3.metric("Monto en Juego (Open)", f"${monto_abierto:,.0f}")
         
-        # Win Rate calculation
         total_ops = len(df_cots); won_ops = len(df_cots[df_cots['estado'].isin(['Aprobada','Facturada'])])
         win_rate = (won_ops/total_ops*100) if total_ops > 0 else 0
         c4.metric("Tasa de Cierre", f"{win_rate:.1f}%")
@@ -602,8 +603,8 @@ def modulo_dashboard():
         st.subheader("Desempeño Individual vs Metas")
         user_data = users.get(curr_email, {})
         my_team = user_data.get('equipo', 'Sin Equipo')
-        
         df_my_sales = df_cots[(df_cots['vendedor'] == user_data.get('name','')) & (df_cots['estado'] == 'Facturada')]
+        
         def get_cat(m): return clasificar_cliente(m)
         if not df_my_sales.empty:
             df_my_sales['Categoria'] = df_my_sales['total'].apply(get_cat)
@@ -709,10 +710,7 @@ def modulo_admin():
                 elif new_email in users: st.error("Este usuario ya existe")
                 else:
                     hashed = bcrypt.hashpw(new_pass.encode(), bcrypt.gensalt()).decode()
-                    users[new_email] = {
-                        "name": new_name, "role": new_role, "password_hash": hashed, "equipo": new_team,
-                        "meta_rev": 0, "meta_cli_big": 0, "meta_cli_mid": 0, "meta_cli_small": 0
-                    }
+                    users[new_email] = {"name": new_name, "role": new_role, "password_hash": hashed, "equipo": new_team, "meta_rev": 0, "meta_cli_big": 0, "meta_cli_mid": 0, "meta_cli_small": 0}
                     if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
                         sync_users_after_update()
                         st.success(f"Usuario {new_email} creado exitosamente"); time.sleep(1); st.rerun()
@@ -722,17 +720,9 @@ def modulo_admin():
         st.subheader("Usuarios Registrados")
         clean_users = []
         for u_email, u_data in users.items():
-            clean_users.append({
-                "Email": u_email,
-                "Nombre": u_data.get('name', ''),
-                "Rol": u_data.get('role', ''),
-                "Equipo": u_data.get('equipo', '-'),
-                "Meta $": f"${u_data.get('meta_rev', 0):,.0f}"
-            })
+            clean_users.append({"Email": u_email, "Nombre": u_data.get('name', ''), "Rol": u_data.get('role', ''), "Equipo": u_data.get('equipo', '-'), "Meta $": f"${u_data.get('meta_rev', 0):,.0f}"})
         st.dataframe(pd.DataFrame(clean_users), use_container_width=True)
-        
-        st.markdown("---")
-        st.subheader("✏️ Editar Perfil y Metas")
+        st.markdown("---"); st.subheader("✏️ Editar Perfil y Metas")
         edit_user = st.selectbox("Seleccionar Usuario", list(users.keys()))
         
         if edit_user:
@@ -750,34 +740,25 @@ def modulo_admin():
                 m_sml = col_m4.number_input("Meta Clientes Chicos (5-10k)", value=int(u.get('meta_cli_small', 0)))
 
                 if st.button("💾 Guardar Cambios"):
-                    users[edit_user].update({
-                        'role': new_role_e, 'equipo': new_team_e,
-                        'meta_rev': m_rev, 'meta_cli_big': m_big, 'meta_cli_mid': m_mid, 'meta_cli_small': m_sml
-                    })
+                    users[edit_user].update({'role': new_role_e, 'equipo': new_team_e, 'meta_rev': m_rev, 'meta_cli_big': m_big, 'meta_cli_mid': m_mid, 'meta_cli_small': m_sml})
                     if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
-                        sync_users_after_update()
-                        st.success("Perfil actualizado"); time.sleep(1); st.rerun()
+                        sync_users_after_update(); st.success("Perfil actualizado"); time.sleep(1); st.rerun()
                 
-                st.divider()
-                st.warning("⚠️ Zona Seguridad")
+                st.divider(); st.warning("⚠️ Zona Seguridad")
                 pass_rst = st.text_input("Nueva Contraseña (Admin)", type="password")
                 if st.button("Reestablecer Clave"):
                     if pass_rst:
                         users[edit_user]['password_hash'] = bcrypt.hashpw(pass_rst.encode(), bcrypt.gensalt()).decode()
                         if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
-                            sync_users_after_update()
-                            st.success("Clave cambiada")
+                            sync_users_after_update(); st.success("Clave cambiada")
                 
                 st.markdown("### 🚨 Zona de Peligro")
-                if edit_user == st.session_state['current_user']:
-                    st.error("No puedes eliminar tu propio usuario mientras estás logueado.")
+                if edit_user == st.session_state['current_user']: st.error("No puedes eliminar tu propio usuario mientras estás logueado.")
                 else:
                     if st.button(f"🗑️ Eliminar a {edit_user}", type="primary"):
                         del users[edit_user]
                         if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
-                            sync_users_after_update()
-                            st.success(f"Usuario {edit_user} eliminado.")
-                            time.sleep(1); st.rerun()
+                            sync_users_after_update(); st.success(f"Usuario {edit_user} eliminado."); time.sleep(1); st.rerun()
 
 # --- MENU LATERAL ---
 with st.sidebar:
@@ -788,9 +769,9 @@ with st.sidebar:
     menu = option_menu("Menú", opts, icons=icos, default_index=0)
     if st.button("Salir"): logout()
 
-if menu == "Prospectos y Clientes": modulo_crm()
+if menu == "Seguimiento": modulo_seguimiento()
+elif menu == "Prospectos y Clientes": modulo_crm()
 elif menu == "Cotizador": modulo_cotizador()
-elif menu == "Seguimiento": modulo_seguimiento()
 elif menu == "Dashboards": modulo_dashboard()
 elif menu == "Finanzas": modulo_finanzas()
 elif menu == "Usuarios": modulo_admin()

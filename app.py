@@ -79,7 +79,6 @@ if 'leads_db' not in st.session_state:
 if 'cotizaciones' not in st.session_state:
     cots, sha_c = github_get_json('url_cotizaciones')
     st.session_state['cotizaciones_sha'] = sha_c
-    # Agregamos columna 'idioma'
     cols = ['id', 'fecha', 'empresa', 'pais', 'total', 'moneda', 'estado', 'vendedor', 'oc', 'factura', 'pago', 'hes', 'hes_num', 'items', 'pdf_data', 'idioma']
     if cots and isinstance(cots, list):
         df = pd.DataFrame(cots)
@@ -162,10 +161,11 @@ def obtener_indicadores():
     return t
 TASAS = obtener_indicadores()
 
-# --- TRADUCCIONES Y EMPRESAS ---
+# --- TRADUCCIONES COMPLETAS (CORREGIDO) ---
 TEXTOS = {
     "ES": {
         "title": "Cotizador", "quote": "COTIZACIÓN", "invoice_to": "Facturar a:",
+        "client": "Cliente", "sec_prod": "Licencias", "sec_serv": "Servicios",
         "desc": "Descripción", "qty": "Cant", "unit": "Unitario", "total": "Total",
         "subtotal": "Subtotal", "fee": "Fee Admin", "discount": "Descuento", "bank": "Bank Fee",
         "legal_intl": "Facturación a {pais}. +Impuestos retenidos +Gastos OUR.",
@@ -174,6 +174,7 @@ TEXTOS = {
     },
     "PT": {
         "title": "Cotação", "quote": "COTAÇÃO", "invoice_to": "Faturar para:",
+        "client": "Cliente", "sec_prod": "Licenças", "sec_serv": "Serviços",
         "desc": "Descrição", "qty": "Qtd", "unit": "Unitário", "total": "Total",
         "subtotal": "Subtotal", "fee": "Taxa Admin", "discount": "Desconto", "bank": "Taxa Bancária",
         "legal_intl": "Faturamento para {pais}. +Impostos retidos +Despesas OUR.",
@@ -182,6 +183,7 @@ TEXTOS = {
     },
     "EN": {
         "title": "Quotation", "quote": "QUOTATION", "invoice_to": "Bill to:",
+        "client": "Client", "sec_prod": "Licenses", "sec_serv": "Services",
         "desc": "Description", "qty": "Qty", "unit": "Unit Price", "total": "Total",
         "subtotal": "Subtotal", "fee": "Admin Fee", "discount": "Discount", "bank": "Bank Fee",
         "legal_intl": "Billing to {pais}. +Withholding taxes +OUR expenses.",
@@ -247,7 +249,6 @@ class PDF(FPDF):
     def header(self):
         if os.path.exists(LOGO_PATH): self.image(LOGO_PATH, 10, 10, 35)
         self.set_font('Arial', 'B', 18); self.set_text_color(0, 51, 102)
-        # Título dinámico según idioma
         self.cell(0, 15, getattr(self,'tit_doc','COTIZACIÓN'), 0, 1, 'R')
         self.set_draw_color(0, 51, 102); self.line(10, 30, 200, 30); self.ln(5)
     def footer(self):
@@ -255,60 +256,39 @@ class PDF(FPDF):
         self.cell(0, 10, 'TalentPro Digital System', 0, 0, 'C')
 
 def generar_pdf_final(emp, cli, items, calc, idioma_code, extras):
-    # Selección de textos según idioma (fallback a ES)
     T = TEXTOS.get(idioma_code, TEXTOS["ES"])
-    
-    pdf = PDF()
-    pdf.tit_doc = T['quote']
-    pdf.add_page()
-    
+    pdf = PDF(); pdf.tit_doc=T['quote']; pdf.add_page()
     pdf.set_font("Arial",'B',10); pdf.set_text_color(0,51,102); pdf.cell(95,5,emp['Nombre'],0,0)
     pdf.set_text_color(100); pdf.cell(95,5,T['invoice_to'],0,1)
-    
     pdf.set_font("Arial",'',9); pdf.set_text_color(50); y=pdf.get_y()
     pdf.cell(95,5,emp['ID'],0,1); pdf.multi_cell(90,5,emp['Dir']); pdf.cell(95,5,emp['Giro'],0,1)
-    
     pdf.set_xy(105,y); pdf.set_font("Arial",'B',10); pdf.set_text_color(0); pdf.cell(95,5,cli['empresa'],0,1)
     pdf.set_xy(105,pdf.get_y()); pdf.set_font("Arial",'',9); pdf.set_text_color(50)
     pdf.cell(95,5,cli['contacto'],0,1); pdf.set_xy(105,pdf.get_y()); pdf.cell(95,5,cli['email'],0,1)
-    
     pdf.ln(5); pdf.set_xy(105,pdf.get_y()); pdf.set_text_color(0,51,102)
-    # Fecha en formato local si es posible, pero YYYY-MM-DD es universal o DD/MM/YYYY
     pdf.cell(95,5,f"Date: {datetime.now().strftime('%d/%m/%Y')} | ID: {extras['id']}",0,1); pdf.ln(10)
-    
-    # Encabezados de tabla traducidos
     pdf.set_fill_color(0,51,102); pdf.set_text_color(255); pdf.set_font("Arial",'B',9)
-    pdf.cell(110,8,T['desc'],0,0,'L',1); pdf.cell(20,8,T['qty'],0,0,'C',1)
-    pdf.cell(30,8,T['unit'],0,0,'R',1); pdf.cell(30,8,T['total'],0,1,'R',1)
-    
+    pdf.cell(110,8,T['desc'],0,0,'L',1); pdf.cell(20,8,T['qty'],0,0,'C',1); pdf.cell(30,8,T['unit'],0,0,'R',1); pdf.cell(30,8,T['total'],0,1,'R',1)
     pdf.set_text_color(0); pdf.set_font("Arial",'',8); mon=items[0]['Moneda']
     for i in items:
         q=str(i['Det']).split('(')[0].replace('x','').strip()
-        pdf.cell(110,7,f"  {i['Desc'][:60]}",'B',0,'L'); pdf.cell(20,7,q,'B',0,'C')
-        pdf.cell(30,7,f"{i['Unit']:,.2f}",'B',0,'R'); pdf.cell(30,7,f"{i['Total']:,.2f}",'B',1,'R')
+        pdf.cell(110,7,f"  {i['Desc'][:60]}",'B',0,'L'); pdf.cell(20,7,q,'B',0,'C'); pdf.cell(30,7,f"{i['Unit']:,.2f}",'B',0,'R'); pdf.cell(30,7,f"{i['Total']:,.2f}",'B',1,'R')
     pdf.ln(5)
-    
     x=120
     def r(l,v,b=False):
         pdf.set_x(x); pdf.set_font("Arial",'B' if b else '',10); pdf.set_text_color(0 if not b else 255)
         if b: pdf.set_fill_color(0,51,102)
         pdf.cell(35,7,l,0,0,'R',b); pdf.cell(35,7,f"{mon} {v:,.2f} ",0,1,'R',b)
-    
     r(T['subtotal'], calc['subtotal'])
     if calc['fee']>0: r(T['fee'], calc['fee'])
     if calc['tax_val']>0: r(calc['tax_name'], calc['tax_val'])
     if extras.get('bank',0)>0: r(T['bank'], extras['bank'])
     if extras.get('desc',0)>0: r(T['discount'], -extras['desc'])
     pdf.ln(1); r(T['total'].upper(), calc['total'], True); pdf.ln(10)
-    
     pdf.set_font("Arial",'I',8); pdf.set_text_color(80)
     if emp['Nombre']==EMPRESAS['Latam']['Nombre']: pdf.multi_cell(0,4,T['legal_intl'].format(pais=extras['pais']),0,'L'); pdf.ln(3)
-    
-    # Política No-Show
     if any(any(tr in i['Desc'].lower() for tr in ['feedback','coaching','entrevista']) for i in items):
-        pdf.set_font("Arial",'B',8); pdf.cell(0,4,T['noshow_title'],0,1)
-        pdf.set_font("Arial",'',8); pdf.multi_cell(0,4,T['noshow_text'],0,'L'); pdf.ln(3)
-        
+        pdf.set_font("Arial",'B',8); pdf.cell(0,4,T['noshow_title'],0,1); pdf.set_font("Arial",'',8); pdf.multi_cell(0,4,T['noshow_text'],0,'L'); pdf.ln(3)
     pdf.set_text_color(100); pdf.cell(0,5,T['validity'],0,1)
     return pdf.output(dest='S').encode('latin-1')
 
@@ -369,13 +349,7 @@ def modulo_crm():
             st.dataframe(dfc[['fecha','id','pais','total','estado','factura','pago']], use_container_width=True)
 
 def modulo_cotizador():
-    cl, ct = st.columns([1, 5])
-    # SELECCIÓN DE IDIOMA
-    idi = cl.selectbox("🌐", ["ES", "PT", "EN"])
-    # Cargar textos según selección
-    txt = TEXTOS[idi]
-    ct.title(txt['title'])
-    
+    cl, ct = st.columns([1, 5]); idi = cl.selectbox("🌐", ["ES", "PT", "EN"]); txt = TEXTOS[idi]; ct.title(txt['title'])
     c1,c2,c3,c4 = st.columns(4)
     c1.metric("UF", f"${TASAS['UF']:,.0f}"); c2.metric("USD", f"${TASAS['USD_CLP']:,.0f}"); c3.metric("BRL", f"{TASAS['USD_BRL']:.2f}")
     if c4.button("Actualizar Tasas"): obtener_indicadores.clear(); st.rerun()
@@ -418,18 +392,15 @@ def modulo_cotizador():
                 if not emp: st.error("Falta Empresa"); return
                 nid=f"TP-{random.randint(1000,9999)}"; cli={'empresa':emp,'contacto':con,'email':ema}
                 ext={'fee':vfee,'bank':bnk,'desc':dsc,'pais':ps,'id':nid}
-                
                 prod_items = [x for x in st.session_state['carrito'] if x['Ítem']=='Evaluación']
                 serv_items = [x for x in st.session_state['carrito'] if x['Ítem']=='Servicio']
                 links_html = ""
-                # PASAMOS EL IDIOMA (idi) A LA FUNCIÓN GENERADORA
                 if ps == "Chile" and prod_items and serv_items:
                     sub_p = sum(x['Total'] for x in prod_items); fee_p = sub_p*0.10 if fee else 0; tax_p = sub_p*0.19; tot_p = sub_p + fee_p + tax_p
                     calc_p = {'subtotal':sub_p, 'fee':fee_p, 'tax_name':"IVA (19%)", 'tax_val':tax_p, 'total':tot_p}
                     pdf_p = generar_pdf_final(EMPRESAS['Chile_Pruebas'], cli, prod_items, calc_p, idi, ext)
                     b64_p = base64.b64encode(pdf_p).decode('latin-1')
                     links_html += f'<a href="data:application/pdf;base64,{b64_p}" download="Cot_{nid}_Productos.pdf">📄 Descargar Cotización (Productos - SpA)</a><br><br>'
-
                     sub_s = sum(x['Total'] for x in serv_items); tot_s = sub_s + bnk - dsc
                     calc_s = {'subtotal':sub_s, 'fee':0, 'tax_name':"", 'tax_val':0, 'total':tot_s}
                     pdf_s = generar_pdf_final(EMPRESAS['Chile_Servicios'], cli, serv_items, calc_s, idi, ext)
@@ -443,16 +414,8 @@ def modulo_cotizador():
                     b64 = base64.b64encode(pdf).decode('latin-1')
                     links_html = f'<a href="data:application/pdf;base64,{b64}" download="Cot_{nid}.pdf">📄 Descargar PDF</a>'
                     st.success("✅ Cotización generada")
-
                 st.markdown(links_html, unsafe_allow_html=True)
-                
-                # GUARDAMOS EL IDIOMA EN LA BD
-                row = {
-                    'id':nid, 'fecha':str(datetime.now().date()), 'empresa':emp, 'pais':ps, 'total':fin, 'moneda':ctx['mon'], 
-                    'estado':'Enviada', 'vendedor':ven, 'oc':'', 'factura':'', 'pago':'Pendiente', 'hes':False, 'hes_num':'',
-                    'items': st.session_state['carrito'], 'pdf_data': ext, 'idioma': idi
-                }
-                
+                row = {'id':nid, 'fecha':str(datetime.now().date()), 'empresa':emp, 'pais':ps, 'total':fin, 'moneda':ctx['mon'], 'estado':'Enviada', 'vendedor':ven, 'oc':'', 'factura':'', 'pago':'Pendiente', 'hes':False, 'hes_num':'', 'items': st.session_state['carrito'], 'pdf_data': ext, 'idioma': idi}
                 st.session_state['cotizaciones'] = pd.concat([st.session_state['cotizaciones'], pd.DataFrame([row])], ignore_index=True)
                 if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
                     st.info("Guardado en Base de Datos"); st.session_state['carrito']=[]; time.sleep(2)
@@ -465,31 +428,24 @@ def modulo_seguimiento():
     df = st.session_state['cotizaciones']
     if df.empty: st.info("Sin datos."); return
     df = df.sort_values('fecha', ascending=False)
-    
     curr_user = st.session_state['current_user']
     curr_role = st.session_state.get('current_role', 'Comercial')
-    
     if curr_role == 'Comercial':
         my_team = st.session_state['users_db'][curr_user].get('equipo', 'N/A')
         team_names = [u['name'] for k, u in st.session_state['users_db'].items() if u.get('equipo') == my_team]
         df = df[df['vendedor'].isin(team_names)]
-    
     c1, c2 = st.columns([3, 1])
     with c1: st.info("ℹ️ Gestión: Cambia estado a 'Aprobada' para que Finanzas facture.")
     with c2: ver_historial = st.checkbox("📂 Ver Historial Completo", value=False)
-    
     if not ver_historial:
         df = df[df['estado'].isin(['Enviada', 'Aprobada'])]
         if df.empty: st.warning("No tienes cotizaciones abiertas.")
-
     for i, r in df.iterrows():
-        # MOSTRAR ETIQUETA DE IDIOMA
         lang_tag = f"[{r.get('idioma','ES')}]"
         label = f"{lang_tag} {r['fecha']} | {r['id']} | {r['empresa']} | {r['moneda']} {r['total']:,.0f}"
         if r['estado'] == 'Facturada': label += " ✅ (Facturada)"
         elif r['estado'] == 'Aprobada': label += " 🎉 (Cerrada)"
         elif r['estado'] == 'Enviada': label += " ⏳ (En Negociación)"
-        
         with st.expander(label):
             col_status, col_req = st.columns(2)
             with col_status:
@@ -503,7 +459,6 @@ def modulo_seguimiento():
                 st.caption("Requisitos")
                 hes_check = st.checkbox("Requiere HES", value=r.get('hes', False), key=f"hs_{r['id']}", disabled=disabled_st)
                 if hes_check: st.warning("⚠️ Requiere HES para facturar.")
-
             if not disabled_st and st.button("Actualizar", key=f"btn_{r['id']}"):
                 st.session_state['cotizaciones'].at[i, 'estado'] = new_status
                 st.session_state['cotizaciones'].at[i, 'hes'] = hes_check
@@ -514,9 +469,7 @@ def modulo_finanzas():
     st.title("💰 Gestión Financiera")
     df = st.session_state['cotizaciones']
     if df.empty: st.info("No hay datos."); return
-    
     tab_billing, tab_collection = st.tabs(["📝 Por Facturar (Backlog)", "💵 Historial Facturadas"])
-    
     with tab_billing:
         st.subheader("Pendientes de Facturación")
         to_bill = df[df['estado'] == 'Aprobada']
@@ -527,37 +480,30 @@ def modulo_finanzas():
                     lang_tag = f"[{r.get('idioma','ES')}]"
                     st.markdown(f"**{lang_tag} {r['empresa']}** | ID: {r['id']} | Total: {r['moneda']} {r['total']:,.0f}")
                     if r.get('hes'): st.error("🚨 REQUISITO: Esta venta requiere N° HES o MIGO.")
-                    
                     if r.get('items') and isinstance(r['items'], list):
                         cli = {'empresa':r['empresa'], 'contacto':'', 'email':''} 
                         ext = r.get('pdf_data', {'id':r['id'], 'pais':r['pais'], 'bank':0, 'desc':0})
                         prod_items = [x for x in r['items'] if x['Ítem']=='Evaluación']
                         serv_items = [x for x in r['items'] if x['Ítem']=='Servicio']
-                        
-                        # Recuperar idioma guardado para regenerar PDF correcto
                         idi_saved = r.get('idioma', 'ES')
-                        
                         pdf_links = ""
                         if r['pais'] == "Chile" and prod_items and serv_items:
                              sub_p = sum(x['Total'] for x in prod_items); tax_p = sub_p*0.19; tot_p = sub_p*1.19
                              calc_p = {'subtotal':sub_p, 'fee':0, 'tax_name':"IVA", 'tax_val':tax_p, 'total':tot_p}
                              pdf_p = generar_pdf_final(EMPRESAS['Chile_Pruebas'], cli, prod_items, calc_p, idi_saved, ext)
                              b64_p = base64.b64encode(pdf_p).decode('latin-1')
-                             
                              sub_s = sum(x['Total'] for x in serv_items); tot_s = sub_s
                              calc_s = {'subtotal':sub_s, 'fee':0, 'tax_name':"", 'tax_val':0, 'total':tot_s}
                              pdf_s = generar_pdf_final(EMPRESAS['Chile_Servicios'], cli, serv_items, calc_s, idi_saved, ext)
                              b64_s = base64.b64encode(pdf_s).decode('latin-1')
                              pdf_links = f'<a href="data:application/pdf;base64,{b64_p}" download="Cot_{r["id"]}_P.pdf">📄 Ver PDF SpA ({idi_saved})</a> | <a href="data:application/pdf;base64,{b64_s}" download="Cot_{r["id"]}_S.pdf">📄 Ver PDF Ltda ({idi_saved})</a>'
                         else:
-                             ent = get_empresa(r['pais'], r['items'])
-                             sub = sum(x['Total'] for x in r['items']); tn, tv = get_impuestos(r['pais'], sub, sub); calc = {'subtotal':sub, 'fee':0, 'tax_name':tn, 'tax_val':tv, 'total':r['total']}
+                             ent = get_empresa(r['pais'], r['items']); sub = sum(x['Total'] for x in r['items']); tn, tv = get_impuestos(r['pais'], sub, sub); calc = {'subtotal':sub, 'fee':0, 'tax_name':tn, 'tax_val':tv, 'total':r['total']}
                              pdf = generar_pdf_final(ent, cli, r['items'], calc, idi_saved, ext)
                              b64 = base64.b64encode(pdf).decode('latin-1')
                              pdf_links = f'<a href="data:application/pdf;base64,{b64}" download="Cot_{r["id"]}.pdf">📄 Ver PDF Cotización ({idi_saved})</a>'
                         st.markdown(pdf_links, unsafe_allow_html=True)
                     else: st.warning("⚠️ PDF no disponible.")
-
                     c1, c2, c3, c4 = st.columns(4)
                     new_oc = c1.text_input("OC", value=r.get('oc',''), key=f"oc_{r['id']}")
                     new_hes_num = c2.text_input("N° HES", value=r.get('hes_num',''), key=f"hnum_{r['id']}")
@@ -571,26 +517,19 @@ def modulo_finanzas():
                         if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
                             st.success(f"Factura {new_inv} guardada!"); time.sleep(1); st.rerun()
                     st.divider()
-
     with tab_collection:
         st.subheader("Historial y Cobranza")
         billed = df[df['estado'] == 'Facturada'].copy()
-        if billed.empty:
-            st.info("No hay historial de facturación.")
+        if billed.empty: st.info("No hay historial.")
         else:
             st.dataframe(billed[['fecha', 'id', 'empresa', 'total', 'moneda', 'oc', 'hes_num', 'factura', 'pago']], use_container_width=True)
-            st.markdown("---")
-            st.subheader("🔧 Gestión de Factura (Edición/Anulación)")
-            
+            st.markdown("---"); st.subheader("🔧 Gestión de Factura")
             inv_list = billed['factura'].unique().tolist()
             sel_inv = st.selectbox("Seleccionar N° Factura", inv_list)
-            
             if sel_inv:
                 row_idx = df[df['factura'] == sel_inv].index[0]
                 r_sel = st.session_state['cotizaciones'].iloc[row_idx]
-                
                 t1, t2, t3 = st.tabs(["💰 Actualizar Pago", "✏️ Corregir Datos", "🚫 Anular Factura"])
-                
                 with t1:
                     curr_pay = r_sel['pago']
                     c1, c2 = st.columns([2,1])
@@ -599,20 +538,17 @@ def modulo_finanzas():
                         st.session_state['cotizaciones'].at[row_idx, 'pago'] = new_p
                         github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha'))
                         st.success("Pago actualizado"); time.sleep(0.5); st.rerun()
-
                 with t2:
                     st.info("Edita datos si hubo un error de tipeo.")
                     e_oc = st.text_input("Corregir OC", value=r_sel['oc'])
                     e_hes = st.text_input("Corregir HES", value=r_sel['hes_num'])
                     e_inv = st.text_input("Corregir N° Factura", value=r_sel['factura'])
-                    
                     if st.button("Guardar Correcciones"):
                         st.session_state['cotizaciones'].at[row_idx, 'oc'] = e_oc
                         st.session_state['cotizaciones'].at[row_idx, 'hes_num'] = e_hes
                         st.session_state['cotizaciones'].at[row_idx, 'factura'] = e_inv
                         if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
                             st.success("Datos corregidos"); time.sleep(1); st.rerun()
-
                 with t3:
                     st.error("⚠️ CUIDADO: Esto eliminará la factura y devolverá la cotización a la pestaña 'Por Facturar'.")
                     if st.button("🗑️ Eliminar Factura (Revertir a Backlog)"):
@@ -620,7 +556,7 @@ def modulo_finanzas():
                         st.session_state['cotizaciones'].at[row_idx, 'factura'] = ''
                         st.session_state['cotizaciones'].at[row_idx, 'pago'] = 'Pendiente'
                         if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
-                            st.success("Factura eliminada. Cotización devuelta al Backlog."); time.sleep(1); st.rerun()
+                            st.success("Factura eliminada."); time.sleep(1); st.rerun()
 
 def modulo_dashboard():
     st.title("📊 Dashboards & Analytics")
@@ -630,13 +566,10 @@ def modulo_dashboard():
             if col not in df_leads.columns: df_leads[col] = "Sin Dato"
         df_leads = df_leads.fillna("Sin Dato")
     else: df_leads = pd.DataFrame()
-
     df_cots = st.session_state['cotizaciones']
     users = st.session_state['users_db']
     curr_email = st.session_state['current_user']
-    
     tab_gen, tab_kpi, tab_lead, tab_sale, tab_bill = st.tabs(["📊 General", "🎯 Metas y Desempeño", "📇 Leads (Funnel)", "📈 Cierre Ventas", "💵 Facturación"])
-    
     with tab_gen:
         df_open = df_cots[df_cots['estado'].isin(['Enviada', 'Aprobada'])]
         monto_abierto = df_open['total'].sum() if not df_open.empty else 0
@@ -654,7 +587,6 @@ def modulo_dashboard():
         if not df_cots.empty:
             fig = px.pie(df_cots, names='estado', title="Distribución Estado Cotizaciones")
             st.plotly_chart(fig, use_container_width=True)
-
     with tab_kpi:
         st.subheader("Desempeño Individual vs Metas")
         user_data = users.get(curr_email, {})
@@ -666,9 +598,7 @@ def modulo_dashboard():
             my_rev = df_my_sales['total'].sum(); cnt_big = len(df_my_sales[df_my_sales['Categoria']=='Grande'])
             cnt_mid = len(df_my_sales[df_my_sales['Categoria']=='Mediano']); cnt_sml = len(df_my_sales[df_my_sales['Categoria']=='Chico'])
         else: my_rev = 0; cnt_big=0; cnt_mid=0; cnt_sml=0
-
         goal_rev = float(user_data.get('meta_rev', 0)); goal_big = int(user_data.get('meta_cli_big', 0)); goal_mid = int(user_data.get('meta_cli_mid', 0)); goal_sml = int(user_data.get('meta_cli_small', 0))
-
         c1, c2 = st.columns(2)
         with c1:
             st.markdown(f"#### 👤 Mis Resultados ({user_data.get('name','')})")
@@ -676,7 +606,6 @@ def modulo_dashboard():
             else: st.info("Sin meta asignada.")
             c_a, c_b, c_c = st.columns(3)
             c_a.metric("Grandes", f"{cnt_big}/{goal_big}"); c_b.metric("Medianos", f"{cnt_mid}/{goal_mid}"); c_c.metric("Chicos", f"{cnt_sml}/{goal_sml}")
-
         with c2:
             st.markdown(f"#### 🏆 Resultados Equipo: {my_team}")
             team_goal_rev = 0; team_members = []
@@ -689,55 +618,37 @@ def modulo_dashboard():
                 fig_team = go.Figure(go.Indicator(mode = "gauge+number+delta", value = team_rev, domain = {'x': [0, 1], 'y': [0, 1]}, title = {'text': "Avance Equipo"}, delta = {'reference': team_goal_rev}, gauge = {'axis': {'range': [None, team_goal_rev*1.2]}, 'bar': {'color': "#003366"}}))
                 st.plotly_chart(fig_team, use_container_width=True)
             else: st.info("Sin metas de equipo.")
-
     with tab_lead:
         if not df_leads.empty:
             c1, c2 = st.columns(2)
             with c1:
                 st.subheader("Funnel por Etapa")
-                funnel_data = df_leads['Etapa'].value_counts().reset_index()
-                funnel_data.columns = ['Etapa', 'Cantidad']
-                fig_funnel = px.funnel(funnel_data, x='Cantidad', y='Etapa', title="Embudo de Ventas")
+                fig_funnel = px.funnel(df_leads['Etapa'].value_counts().reset_index(), x='count', y='Etapa', title="Embudo")
                 st.plotly_chart(fig_funnel, use_container_width=True)
             with c2:
                 st.subheader("Leads por Origen")
-                fig_source = px.bar(df_leads, x='Origen', title="Fuentes de Leads", color='Origen')
+                fig_source = px.bar(df_leads, x='Origen', title="Fuentes", color='Origen')
                 st.plotly_chart(fig_source, use_container_width=True)
-            st.subheader("Leads por Industria")
-            st.bar_chart(df_leads['Industria'].value_counts())
         else: st.info("No hay datos de leads.")
-
     with tab_sale:
         if not df_cots.empty:
             df_cots['fecha_dt'] = pd.to_datetime(df_cots['fecha'])
             df_cots['Mes'] = df_cots['fecha_dt'].dt.strftime('%Y-%m')
             df_sales = df_cots[df_cots['estado'].isin(['Aprobada','Facturada'])]
             if not df_sales.empty:
-                st.subheader("Evolución de Ventas Cerradas (Mensual)")
-                sales_time = df_sales.groupby('Mes')['total'].sum().reset_index()
-                fig_line = px.line(sales_time, x='Mes', y='total', markers=True, title="Ventas Acumuladas ($)")
+                st.subheader("Evolución de Ventas")
+                fig_line = px.line(df_sales.groupby('Mes')['total'].sum().reset_index(), x='Mes', y='total', markers=True)
                 st.plotly_chart(fig_line, use_container_width=True)
-                st.subheader("Performance por Vendedor")
-                fig_bar = px.bar(df_sales, x='vendedor', y='total', color='pais', title="Ventas por Ejecutivo")
-                st.plotly_chart(fig_bar, use_container_width=True)
             else: st.info("Aún no hay ventas cerradas.")
-            st.divider(); st.subheader("Actividad de Cotización Total")
-            act_time = df_cots.groupby('Mes')['total'].count().reset_index()
-            fig_act = px.bar(act_time, x='Mes', y='total', title="Cantidad de Cotizaciones Enviadas")
-            st.plotly_chart(fig_act, use_container_width=True)
-        else: st.info("Sin datos de cotizaciones.")
-
+        else: st.info("Sin datos.")
     with tab_bill:
         df_inv = df_cots[df_cots['estado']=='Facturada']
         if not df_inv.empty:
             c1, c2, c3 = st.columns(3)
             tot_inv = df_inv['total'].sum()
             tot_paid = df_inv[df_inv['pago']=='Pagada']['total'].sum()
-            tot_pend = tot_inv - tot_paid
             c1.metric("Total Facturado", f"${tot_inv:,.0f}")
-            c2.metric("Cobrado (Pagado)", f"${tot_paid:,.0f}", delta=f"{tot_paid/tot_inv*100:.1f}%")
-            c3.metric("Por Cobrar (Pendiente)", f"${tot_pend:,.0f}", delta_color="inverse")
-            st.subheader("Estado de Pagos")
+            c2.metric("Cobrado", f"${tot_paid:,.0f}")
             fig_pay = px.pie(df_inv, names='pago', title="Status de Cobranza", hole=0.4, color_discrete_map={'Pagada':'green', 'Pendiente':'orange', 'Vencida':'red'})
             st.plotly_chart(fig_pay, use_container_width=True)
         else: st.info("No hay facturas emitidas.")
@@ -745,9 +656,7 @@ def modulo_dashboard():
 def modulo_admin():
     st.title("👥 Administración de Usuarios y Metas")
     users = st.session_state['users_db']
-    
     tab_list, tab_create = st.tabs(["⚙️ Gestionar Usuarios", "➕ Crear Nuevo Usuario"])
-    
     with tab_create:
         st.subheader("Alta de Nuevo Usuario")
         with st.form("new_user_form"):
@@ -756,7 +665,6 @@ def modulo_admin():
             new_role = st.selectbox("Rol", ["Comercial", "Finanzas", "Super Admin"])
             new_team = st.selectbox("Equipo (Solo Comerciales)", ["Cono Sur", "Internacional", "N/A"])
             new_pass = st.text_input("Contraseña Inicial", type="password")
-            
             if st.form_submit_button("Crear Usuario"):
                 if not new_email or not new_pass: st.error("Correo y contraseña obligatorios")
                 elif new_email in users: st.error("Usuario ya existe")
@@ -764,10 +672,8 @@ def modulo_admin():
                     hashed = bcrypt.hashpw(new_pass.encode(), bcrypt.gensalt()).decode()
                     users[new_email] = {"name": new_name, "role": new_role, "password_hash": hashed, "equipo": new_team, "meta_rev": 0, "meta_cli_big": 0, "meta_cli_mid": 0, "meta_cli_small": 0}
                     if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
-                        sync_users_after_update()
-                        st.success(f"Usuario {new_email} creado exitosamente"); time.sleep(1); st.rerun()
+                        sync_users_after_update(); st.success(f"Usuario {new_email} creado"); time.sleep(1); st.rerun()
                     else: st.error("Error al guardar")
-
     with tab_list:
         st.subheader("Usuarios Registrados")
         clean_users = []
@@ -776,26 +682,22 @@ def modulo_admin():
         st.dataframe(pd.DataFrame(clean_users), use_container_width=True)
         st.markdown("---"); st.subheader("✏️ Editar Perfil y Metas")
         edit_user = st.selectbox("Seleccionar Usuario", list(users.keys()))
-        
         if edit_user:
             u = users[edit_user]
             with st.expander(f"Configuración: {u.get('name')}", expanded=True):
                 c1, c2 = st.columns(2)
                 new_role_e = c1.selectbox("Rol", ["Comercial", "Finanzas", "Super Admin"], index=["Comercial", "Finanzas", "Super Admin"].index(u.get('role', 'Comercial')))
                 new_team_e = c2.selectbox("Equipo", ["Cono Sur", "Internacional", "N/A"], index=["Cono Sur", "Internacional", "N/A"].index(u.get('equipo', 'N/A')))
-                
                 st.markdown("#### 🎯 Metas Anuales (Solo Comercial)")
                 col_m1, col_m2, col_m3, col_m4 = st.columns(4)
                 m_rev = col_m1.number_input("Meta Facturación ($)", value=float(u.get('meta_rev', 0)))
                 m_big = col_m2.number_input("Meta Clientes Grandes (>20k)", value=int(u.get('meta_cli_big', 0)))
                 m_mid = col_m3.number_input("Meta Clientes Medianos (10-20k)", value=int(u.get('meta_cli_mid', 0)))
                 m_sml = col_m4.number_input("Meta Clientes Chicos (5-10k)", value=int(u.get('meta_cli_small', 0)))
-
                 if st.button("💾 Guardar Cambios"):
                     users[edit_user].update({'role': new_role_e, 'equipo': new_team_e, 'meta_rev': m_rev, 'meta_cli_big': m_big, 'meta_cli_mid': m_mid, 'meta_cli_small': m_sml})
                     if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
                         sync_users_after_update(); st.success("Perfil actualizado"); time.sleep(1); st.rerun()
-                
                 st.divider(); st.warning("⚠️ Zona Seguridad")
                 pass_rst = st.text_input("Nueva Contraseña (Admin)", type="password")
                 if st.button("Reestablecer Clave"):
@@ -803,7 +705,6 @@ def modulo_admin():
                         users[edit_user]['password_hash'] = bcrypt.hashpw(pass_rst.encode(), bcrypt.gensalt()).decode()
                         if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
                             sync_users_after_update(); st.success("Clave cambiada")
-                
                 st.markdown("### 🚨 Zona de Peligro")
                 if edit_user == st.session_state['current_user']: st.error("No puedes eliminar tu propio usuario mientras estás logueado.")
                 else:
@@ -816,11 +717,7 @@ def modulo_admin():
 with st.sidebar:
     if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=130)
     role = st.session_state.get('current_role', 'Comercial')
-    
-    # REORDERED MENU: Seguimiento is now first
-    opts = ["Seguimiento", "Prospectos y Clientes", "Cotizador", "Dashboards", "Finanzas"]
-    icos = ['check', 'person', 'file', 'bar-chart', 'currency-dollar']
-    
+    opts = ["Seguimiento", "Prospectos y Clientes", "Cotizador", "Dashboards", "Finanzas"]; icos = ['check', 'person', 'file', 'bar-chart', 'currency-dollar']
     if role == "Super Admin": opts.append("Usuarios"); icos.append("people")
     menu = option_menu("Menú", opts, icons=icos, default_index=0)
     if st.button("Salir"): logout()

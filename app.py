@@ -74,8 +74,12 @@ if 'leads_db' not in st.session_state:
 if 'cotizaciones' not in st.session_state:
     cots, sha_c = github_get_json('url_cotizaciones')
     st.session_state['cotizaciones_sha'] = sha_c
-    # Agregamos columna 'hes' para saber si requiere documentos especiales
-    cols = ['id', 'fecha', 'empresa', 'pais', 'total', 'moneda', 'estado', 'vendedor', 'oc', 'factura', 'pago', 'hes']
+    
+    # Definimos las columnas, incluyendo las nuevas para Finanzas
+    # hes: Booleano (Si requiere o no)
+    # hes_num: String (El número real ingresado por finanzas)
+    cols = ['id', 'fecha', 'empresa', 'pais', 'total', 'moneda', 'estado', 'vendedor', 'oc', 'factura', 'pago', 'hes', 'hes_num']
+    
     if cots and isinstance(cots, list):
         df = pd.DataFrame(cots)
         for c in cols:
@@ -377,7 +381,7 @@ def modulo_cotizador():
                     st.success("✅ Cotización generada")
 
                 st.markdown(links_html, unsafe_allow_html=True)
-                row = {'id':nid, 'fecha':str(datetime.now().date()), 'empresa':emp, 'pais':ps, 'total':fin, 'moneda':ctx['mon'], 'estado':'Enviada', 'vendedor':ven, 'oc':'', 'factura':'', 'pago':'Pendiente', 'hes':False}
+                row = {'id':nid, 'fecha':str(datetime.now().date()), 'empresa':emp, 'pais':ps, 'total':fin, 'moneda':ctx['mon'], 'estado':'Enviada', 'vendedor':ven, 'oc':'', 'factura':'', 'pago':'Pendiente', 'hes':False, 'hes_num':''}
                 st.session_state['cotizaciones'] = pd.concat([st.session_state['cotizaciones'], pd.DataFrame([row])], ignore_index=True)
                 if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
                     st.info("Guardado en Base de Datos"); st.session_state['carrito']=[]; time.sleep(2)
@@ -391,10 +395,9 @@ def modulo_seguimiento():
     if df.empty: st.info("Sin datos."); return
     df = df.sort_values('fecha', ascending=False)
     
-    st.info("ℹ️ Aquí gestionas el cierre de la venta. Si se requiere HES u otros documentos, márcalo para que Finanzas lo sepa.")
+    st.info("ℹ️ Gestión Comercial: Una vez que el cliente aprueba, cambia el estado a 'Aprobada'.")
     
     for i, r in df.iterrows():
-        # VISIBILIDAD COMERCIAL: Solo importa si se vendió o no
         label = f"{r['fecha']} | {r['id']} | {r['empresa']} | {r['moneda']} {r['total']:,.0f}"
         if r['estado'] == 'Facturada': label += " ✅ (Facturada)"
         elif r['estado'] == 'Aprobada': label += " 🎉 (Cerrada)"
@@ -404,20 +407,18 @@ def modulo_seguimiento():
             col_status, col_req = st.columns(2)
             with col_status:
                 st.caption("Estado de la Oportunidad")
-                # El vendedor solo maneja estos estados
                 est_options = ["Enviada", "Aprobada", "Rechazada", "Perdida"]
-                # Si ya está facturada, el vendedor solo ve, no toca
+                # Si ya está facturada, Comercial no debe moverla
                 disabled_st = r['estado'] == 'Facturada'
                 current_st = r['estado'] if r['estado'] in est_options else est_options[0]
-                # Si el estado real es Facturada, mostramos Aprobada en el select visual o bloqueado
-                if r['estado'] == 'Facturada': current_st = "Aprobada" 
+                if r['estado'] == 'Facturada': current_st = "Aprobada"
                 
                 new_status = st.selectbox("Estado", est_options, key=f"st_{r['id']}", index=est_options.index(current_st), disabled=disabled_st)
             
             with col_req:
                 st.caption("Requisitos para Facturar")
                 hes_check = st.checkbox("Requiere HES / Inscripción", value=r.get('hes', False), key=f"hs_{r['id']}", disabled=disabled_st)
-                if hes_check: st.warning("⚠️ Finanzas sabrá que debe buscar HES/Docs antes de facturar.")
+                if hes_check: st.warning("⚠️ Finanzas sabrá que debe pedir HES antes de facturar.")
 
             if not disabled_st and st.button("Actualizar Venta", key=f"btn_{r['id']}"):
                 st.session_state['cotizaciones'].at[i, 'estado'] = new_status
@@ -430,60 +431,59 @@ def modulo_finanzas():
     df = st.session_state['cotizaciones']
     if df.empty: st.info("No hay datos."); return
     
-    tab_billing, tab_collection = st.tabs(["📝 Por Facturar (Backlog)", "💵 Cobranza"])
+    tab_billing, tab_collection = st.tabs(["📝 Por Facturar (Backlog)", "💵 Historial Facturadas"])
     
     with tab_billing:
         st.subheader("Pendientes de Facturación")
-        # Filtramos solo las que Comercial marcó como Aprobada (listas para facturar)
-        # Ojo: No mostramos las "Enviada" (aún no se venden) ni las "Facturada" (ya pasaron esta etapa)
+        # Filtro: Solo las Aprobadas por Comercial
         to_bill = df[df['estado'] == 'Aprobada']
         
         if to_bill.empty: 
-            st.success("¡Al día! No hay cotizaciones aprobadas pendientes de factura.")
+            st.success("¡Excelente! No hay cotizaciones pendientes de facturar.")
         else:
             for i, r in to_bill.iterrows():
                 with st.container():
                     st.markdown(f"**{r['empresa']}** | ID: {r['id']} | Total: {r['moneda']} {r['total']:,.0f}")
-                    if r.get('hes'): st.error("🚨 ATENCIÓN: Esta venta requiere HES o Documentos Adicionales")
+                    if r.get('hes'): st.error("🚨 REQUISITO: Esta venta requiere N° HES o MIGO para facturar.")
                     
-                    c1, c2, c3, c4 = st.columns([2, 1, 2, 2])
+                    c1, c2, c3, c4 = st.columns(4)
                     new_oc = c1.text_input("Orden de Compra (OC)", value=r.get('oc',''), key=f"oc_{r['id']}")
-                    hes_ok = c2.checkbox("Docs OK", value=False, key=f"hok_{r['id']}", help="Marcar cuando tengas HES/OC validada")
+                    new_hes_num = c2.text_input("N° HES / MIGO", value=r.get('hes_num',''), key=f"hnum_{r['id']}")
                     new_inv = c3.text_input("N° Factura", key=f"inv_{r['id']}")
                     
                     if c4.button("Emitir Factura", key=f"bill_{r['id']}"):
                         if not new_inv: st.error("Falta N° Factura"); continue
                         st.session_state['cotizaciones'].at[i, 'oc'] = new_oc
+                        st.session_state['cotizaciones'].at[i, 'hes_num'] = new_hes_num
                         st.session_state['cotizaciones'].at[i, 'factura'] = new_inv
-                        st.session_state['cotizaciones'].at[i, 'estado'] = 'Facturada' # Aquí pasa a Cobranza
+                        st.session_state['cotizaciones'].at[i, 'estado'] = 'Facturada'
                         if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
-                            st.success(f"Factura {new_inv} emitida!"); time.sleep(1); st.rerun()
+                            st.success(f"Factura {new_inv} guardada! Movida al historial."); time.sleep(1); st.rerun()
                     st.divider()
 
     with tab_collection:
-        st.subheader("Control de Pagos")
-        # Aquí solo entran las que ya tienen factura
+        st.subheader("Historial y Cobranza")
+        # Filtro: Solo las Facturadas
         billed = df[df['estado'] == 'Facturada'].copy()
         if billed.empty:
-            st.info("No hay facturas emitidas aún.")
+            st.info("No hay historial de facturación.")
         else:
-            billed = billed.sort_values('factura', ascending=False)
-            for i, r in billed.iterrows():
-                with st.expander(f"Factura {r['factura']} - {r['empresa']}"):
-                    c1, c2, c3 = st.columns(3)
-                    c1.write(f"**OC:** {r['oc']}")
-                    c2.write(f"**Monto:** {r['moneda']} {r['total']:,.0f}")
-                    
-                    curr_pay = r.get('pago', 'Pendiente')
-                    pay_opts = ["Pendiente", "Pagada", "Vencida"]
-                    idx_p = pay_opts.index(curr_pay) if curr_pay in pay_opts else 0
-                    new_pay = c3.selectbox("Estado Pago", pay_opts, key=f"py_{r['id']}", index=idx_p)
-                    
-                    if new_pay != curr_pay:
-                        if st.button("Actualizar Pago", key=f"upay_{r['id']}"):
-                            st.session_state['cotizaciones'].at[i, 'pago'] = new_pay
-                            github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha'))
-                            st.success("Pago actualizado"); time.sleep(0.5); st.rerun()
+            # Mostrar tabla detallada como se solicitó
+            st.dataframe(billed[['fecha', 'id', 'empresa', 'total', 'moneda', 'oc', 'hes_num', 'factura', 'pago']], use_container_width=True)
+            
+            st.markdown("---")
+            st.write("**Gestión de Pagos**")
+            # Selección simplificada para actualizar pago
+            sel_inv = st.selectbox("Seleccionar Factura para actualizar pago", billed['factura'].unique())
+            if sel_inv:
+                row_idx = billed[billed['factura'] == sel_inv].index[0]
+                current_p = st.session_state['cotizaciones'].at[row_idx, 'pago']
+                c1, c2 = st.columns([2,1])
+                new_p = c1.selectbox("Estado Pago", ["Pendiente", "Pagada", "Vencida"], index=["Pendiente", "Pagada", "Vencida"].index(current_p))
+                if c2.button("Actualizar Pago"):
+                    st.session_state['cotizaciones'].at[row_idx, 'pago'] = new_p
+                    github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha'))
+                    st.success("Pago actualizado"); time.sleep(0.5); st.rerun()
 
 def modulo_dashboard():
     st.title("📊 Dashboards & Analytics")

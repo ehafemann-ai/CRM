@@ -201,9 +201,7 @@ def get_empresa(pais, items):
     if pais=="Chile": return EMPRESAS["Chile_Pruebas"] if any(i['Ítem']=='Evaluación' for i in items) else EMPRESAS["Chile_Servicios"]
     return EMPRESAS["Latam"]
 
-# --- FUNCIONES DE CATEGORIZACIÓN ---
 def clasificar_cliente(monto):
-    # Lógica de negocio: >20k Grande, 10k-20k Mediano, 5k-10k Chico
     if monto >= 20000: return "Grande"
     if 10000 <= monto < 20000: return "Mediano"
     if 5000 <= monto < 10000: return "Chico"
@@ -383,11 +381,13 @@ def modulo_cotizador():
                     st.success("✅ Cotización generada")
 
                 st.markdown(links_html, unsafe_allow_html=True)
+                
                 row = {
                     'id':nid, 'fecha':str(datetime.now().date()), 'empresa':emp, 'pais':ps, 'total':fin, 'moneda':ctx['mon'], 
                     'estado':'Enviada', 'vendedor':ven, 'oc':'', 'factura':'', 'pago':'Pendiente', 'hes':False, 'hes_num':'',
                     'items': st.session_state['carrito'], 'pdf_data': ext
                 }
+                
                 st.session_state['cotizaciones'] = pd.concat([st.session_state['cotizaciones'], pd.DataFrame([row])], ignore_index=True)
                 if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
                     st.info("Guardado en Base de Datos"); st.session_state['carrito']=[]; time.sleep(2)
@@ -519,7 +519,8 @@ def modulo_dashboard():
     st.title("📊 Dashboards & Analytics")
     if st.session_state['leads_db']:
         df_leads = pd.DataFrame(st.session_state['leads_db'])
-        for col in ['Origen', 'Etapa', 'Industria']:
+        cols_leads_req = ['Origen', 'Etapa', 'Industria']
+        for col in cols_leads_req:
             if col not in df_leads.columns: df_leads[col] = "Sin Dato"
         df_leads = df_leads.fillna("Sin Dato")
     else: df_leads = pd.DataFrame()
@@ -530,7 +531,6 @@ def modulo_dashboard():
     
     tab_gen, tab_kpi, tab_lead, tab_sale, tab_bill = st.tabs(["📊 General", "🎯 Metas y Desempeño", "📇 Leads (Funnel)", "📈 Cierre Ventas", "💵 Facturación"])
     
-    # 1. GENERAL
     with tab_gen:
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Total Leads", len(df_leads))
@@ -545,18 +545,13 @@ def modulo_dashboard():
             fig = px.pie(df_cots, names='estado', title="Distribución Estado Cotizaciones")
             st.plotly_chart(fig, use_container_width=True)
 
-    # 2. METAS Y DESEMPEÑO
     with tab_kpi:
         st.subheader("Desempeño Individual vs Metas")
-        # Datos del usuario actual
         user_data = users.get(curr_email, {})
         my_team = user_data.get('equipo', 'Sin Equipo')
         
-        # Filtramos ventas de este usuario que ya son reales (Facturadas)
-        # Opcional: Podríamos incluir 'Aprobada' si la meta es sobre cierre comercial
         df_my_sales = df_cots[(df_cots['vendedor'] == user_data.get('name','')) & (df_cots['estado'] == 'Facturada')]
         
-        # Clasificar clientes
         def get_cat(m): return clasificar_cliente(m)
         if not df_my_sales.empty:
             df_my_sales['Categoria'] = df_my_sales['total'].apply(get_cat)
@@ -567,7 +562,6 @@ def modulo_dashboard():
         else:
             my_rev = 0; cnt_big=0; cnt_mid=0; cnt_sml=0
 
-        # Metas Personales
         goal_rev = float(user_data.get('meta_rev', 0))
         goal_big = int(user_data.get('meta_cli_big', 0))
         goal_mid = int(user_data.get('meta_cli_mid', 0))
@@ -587,7 +581,6 @@ def modulo_dashboard():
 
         with c2:
             st.markdown(f"#### 🏆 Resultados Equipo: {my_team}")
-            # Sumar metas de todos los del equipo
             team_goal_rev = 0
             team_members = []
             for u, d in users.items():
@@ -595,22 +588,14 @@ def modulo_dashboard():
                     team_goal_rev += float(d.get('meta_rev', 0))
                     team_members.append(d.get('name',''))
             
-            # Sumar ventas reales del equipo
             df_team_sales = df_cots[(df_cots['vendedor'].isin(team_members)) & (df_cots['estado'] == 'Facturada')]
             team_rev = df_team_sales['total'].sum() if not df_team_sales.empty else 0
             
             if team_goal_rev > 0:
                 st.progress(min(team_rev/team_goal_rev, 1.0), text=f"Meta Equipo: ${team_rev:,.0f} / ${team_goal_rev:,.0f}")
-                fig_team = go.Figure(go.Indicator(
-                    mode = "gauge+number+delta",
-                    value = team_rev,
-                    domain = {'x': [0, 1], 'y': [0, 1]},
-                    title = {'text': "Avance Equipo"},
-                    delta = {'reference': team_goal_rev},
-                    gauge = {'axis': {'range': [None, team_goal_rev*1.2]}, 'bar': {'color': "#003366"}}))
+                fig_team = go.Figure(go.Indicator(mode = "gauge+number+delta", value = team_rev, domain = {'x': [0, 1], 'y': [0, 1]}, title = {'text': "Avance Equipo"}, delta = {'reference': team_goal_rev}, gauge = {'axis': {'range': [None, team_goal_rev*1.2]}, 'bar': {'color': "#003366"}}))
                 st.plotly_chart(fig_team, use_container_width=True)
-            else:
-                st.info("El equipo no tiene metas configuradas.")
+            else: st.info("El equipo no tiene metas configuradas.")
 
     with tab_lead:
         if not df_leads.empty:
@@ -742,6 +727,17 @@ def modulo_admin():
                         users[edit_user]['password_hash'] = bcrypt.hashpw(pass_rst.encode(), bcrypt.gensalt()).decode()
                         if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
                             st.success("Clave cambiada")
+                
+                st.markdown("### 🚨 Zona de Peligro")
+                if edit_user == st.session_state['current_user']:
+                    st.error("No puedes eliminar tu propio usuario mientras estás logueado.")
+                else:
+                    if st.button(f"🗑️ Eliminar a {edit_user}", type="primary"):
+                        del users[edit_user]
+                        if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
+                            st.session_state['users_db'] = users
+                            st.success(f"Usuario {edit_user} eliminado.")
+                            time.sleep(1); st.rerun()
 
 # --- MENU LATERAL ---
 with st.sidebar:

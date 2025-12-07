@@ -161,7 +161,6 @@ def obtener_indicadores():
     return t
 TASAS = obtener_indicadores()
 
-# --- TRADUCCIONES COMPLETAS (CORREGIDO) ---
 TEXTOS = {
     "ES": {
         "title": "Cotizador", "quote": "COTIZACIÓN", "invoice_to": "Facturar a:",
@@ -283,7 +282,11 @@ def generar_pdf_final(emp, cli, items, calc, idioma_code, extras):
     if calc['fee']>0: r(T['fee'], calc['fee'])
     if calc['tax_val']>0: r(calc['tax_name'], calc['tax_val'])
     if extras.get('bank',0)>0: r(T['bank'], extras['bank'])
-    if extras.get('desc',0)>0: r(T['discount'], -extras['desc'])
+    
+    # Nombre Personalizado del Descuento
+    lbl_dsc = extras.get('desc_name') if extras.get('desc_name') else T['discount']
+    if extras.get('desc',0)>0: r(lbl_dsc, -extras['desc'])
+    
     pdf.ln(1); r(T['total'].upper(), calc['total'], True); pdf.ln(10)
     pdf.set_font("Arial",'I',8); pdf.set_text_color(80)
     if emp['Nombre']==EMPRESAS['Latam']['Nombre']: pdf.multi_cell(0,4,T['legal_intl'].format(pais=extras['pais']),0,'L'); pdf.ln(3)
@@ -338,14 +341,15 @@ def modulo_crm():
             df = st.session_state['cotizaciones']; dfc = df[df['empresa']==sel]
             tot = dfc['total'].sum() if not dfc.empty else 0
             fac_cli = dfc[dfc['estado']=='Facturada']['total'].sum() if not dfc.empty else 0
+            pag_cli = dfc[(dfc['estado']=='Facturada') & (dfc['pago']=='Pagada')]['total'].sum() if not dfc.empty else 0
             lead_info = next((l for l in st.session_state['leads_db'] if l['Cliente'] == sel), None)
             st.markdown(f"### 🏢 {sel}")
             if lead_info:
                 c1,c2,c3 = st.columns(3)
                 c1.info(f"**Industria:** {lead_info.get('Industria','')}"); c2.info(f"**Web:** {lead_info.get('Web','')}"); c3.info(f"**Origen:** {lead_info.get('Origen','')}")
                 st.write(f"**Contactos:** {lead_info.get('Contactos','')}"); st.write(f"**Dolor:** {lead_info.get('Expectativa','')}"); st.divider()
-            c1,c2,c3 = st.columns(3)
-            c1.metric("Total Cotizado", f"${tot:,.0f}"); c2.metric("Total Facturado", f"${fac_cli:,.0f}"); c3.metric("# Cotizaciones", len(dfc))
+            c1,c2,c3,c4 = st.columns(4)
+            c1.metric("Total Cotizado", f"${tot:,.0f}"); c2.metric("Total Facturado", f"${fac_cli:,.0f}"); c3.metric("Total Pagado", f"${pag_cli:,.0f}"); c4.metric("# Cotizaciones", len(dfc))
             st.dataframe(dfc[['fecha','id','pais','total','estado','factura','pago']], use_container_width=True)
 
 def modulo_cotizador():
@@ -381,17 +385,48 @@ def modulo_cotizador():
             if c4.button("Add",key="b2"): st.session_state['carrito'].append({"Ítem":"Servicio","Desc":ss,"Det":dt,"Moneda":ctx['mon'],"Unit":us,"Total":us*qs}); st.rerun()
 
     if st.session_state['carrito']:
-        st.markdown("---"); dfc=pd.DataFrame(st.session_state['carrito']); st.dataframe(dfc, use_container_width=True)
-        sub=dfc['Total'].sum(); eva=dfc[dfc['Ítem']=='Evaluación']['Total'].sum()
+        st.markdown("---")
+        # -----------------------------------------------------
+        # NUEVO: EDITOR INTERACTIVO (Data Editor)
+        # -----------------------------------------------------
+        df_cart = pd.DataFrame(st.session_state['carrito'])
+        st.caption("📝 Puedes editar la descripción, cantidad o precio directamente en la tabla. Usa la tecla SUPR para eliminar filas.")
+        
+        edited_cart = st.data_editor(
+            df_cart,
+            num_rows="dynamic",
+            use_container_width=True,
+            column_config={
+                "Total": st.column_config.NumberColumn(format="$%.2f"),
+                "Unit": st.column_config.NumberColumn(format="$%.2f")
+            },
+            key="cart_editor"
+        )
+        
+        # Actualizamos el estado con lo editado
+        st.session_state['carrito'] = edited_cart.to_dict('records')
+        
+        # Recalcular totales basados en la edición
+        sub = sum(item['Total'] for item in st.session_state['carrito'])
+        eva = sum(item['Total'] for item in st.session_state['carrito'] if item['Ítem']=='Evaluación')
+        
         cL, cR = st.columns([3,1])
         with cR:
-            fee=st.checkbox("Fee 10%",False); bnk=st.number_input("Bank",0.0); dsc=st.number_input("Desc",0.0)
+            fee=st.checkbox("Fee 10%",False); bnk=st.number_input("Bank",0.0)
+            
+            # NUEVO: NOMBRE DEL DESCUENTO
+            dsc_name = st.text_input("Glosa Descuento", value="Descuento")
+            dsc = st.number_input("Monto Desc", 0.0)
+            
             vfee=eva*0.10 if fee else 0; tn,tv=get_impuestos(ps,sub,eva); fin=sub+vfee+tv+bnk-dsc
             st.metric("TOTAL",f"{ctx['mon']} {fin:,.2f}")
+            
             if st.button("GUARDAR", type="primary"):
                 if not emp: st.error("Falta Empresa"); return
                 nid=f"TP-{random.randint(1000,9999)}"; cli={'empresa':emp,'contacto':con,'email':ema}
-                ext={'fee':vfee,'bank':bnk,'desc':dsc,'pais':ps,'id':nid}
+                # Guardamos el nombre del descuento en los extras
+                ext={'fee':vfee,'bank':bnk,'desc':dsc,'desc_name':dsc_name, 'pais':ps,'id':nid}
+                
                 prod_items = [x for x in st.session_state['carrito'] if x['Ítem']=='Evaluación']
                 serv_items = [x for x in st.session_state['carrito'] if x['Ítem']=='Servicio']
                 links_html = ""
@@ -647,6 +682,7 @@ def modulo_dashboard():
             c1, c2, c3 = st.columns(3)
             tot_inv = df_inv['total'].sum()
             tot_paid = df_inv[df_inv['pago']=='Pagada']['total'].sum()
+            tot_pend = tot_inv - tot_paid
             c1.metric("Total Facturado", f"${tot_inv:,.0f}")
             c2.metric("Cobrado", f"${tot_paid:,.0f}")
             fig_pay = px.pie(df_inv, names='pago', title="Status de Cobranza", hole=0.4, color_discrete_map={'Pagada':'green', 'Pendiente':'orange', 'Vencida':'red'})

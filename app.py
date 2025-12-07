@@ -206,7 +206,7 @@ class PDF(FPDF):
         self.cell(0, 10, 'TalentPro Digital System', 0, 0, 'C')
 
 def generar_pdf_final(emp, cli, items, calc, titulo, extras):
-    pdf = PDF(); pdf.tit_doc=titulo; pdf.add_page()
+    pdf = PDF(); pdf.tit=titulo; pdf.tit_doc=titulo; pdf.add_page()
     pdf.set_font("Arial",'B',10); pdf.set_text_color(0,51,102); pdf.cell(95,5,emp['Nombre'],0,0)
     pdf.set_text_color(100); pdf.cell(95,5,"Facturar a:",0,1)
     pdf.set_font("Arial",'',9); pdf.set_text_color(50); y=pdf.get_y()
@@ -424,13 +424,26 @@ def modulo_seguimiento():
                     st.success("Actualizado"); time.sleep(1); st.rerun()
 
 # ==============================================================================
-# MÓDULO NUEVO: DASHBOARDS
+# MÓDULO DASHBOARD (ARREGLADO)
 # ==============================================================================
 def modulo_dashboard():
     st.title("📊 Dashboards & Analytics")
     
-    # Preparamos dataframes
-    df_leads = pd.DataFrame(st.session_state['leads_db']) if st.session_state['leads_db'] else pd.DataFrame()
+    # --- SANITIZACIÓN DE DATOS LEADS ---
+    # Corrección del error: Si la lista de leads tiene diccionarios viejos sin "Origen",
+    # Pandas crea el DF con NaNs o falla al plotear. Aquí forzamos las columnas.
+    if st.session_state['leads_db']:
+        df_leads = pd.DataFrame(st.session_state['leads_db'])
+        # Columnas críticas para los gráficos
+        cols_leads_req = ['Origen', 'Etapa', 'Industria']
+        for col in cols_leads_req:
+            if col not in df_leads.columns:
+                df_leads[col] = "Sin Dato"
+        # Rellenar NaNs por si existen columnas pero con valores vacíos
+        df_leads = df_leads.fillna("Sin Dato")
+    else:
+        df_leads = pd.DataFrame()
+
     df_cots = st.session_state['cotizaciones']
     
     tab_gen, tab_lead, tab_sale, tab_bill = st.tabs(["📊 General", "📇 Leads (Funnel)", "📈 Cierre Ventas", "💵 Facturación"])
@@ -439,22 +452,18 @@ def modulo_dashboard():
     with tab_gen:
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Total Leads", len(df_leads))
-        # Total Cotizado (Sumatoria bruta, mezclando monedas por simplicidad visual)
         c2.metric("Total Cotizado", f"${df_cots['total'].sum():,.0f}" if not df_cots.empty else "$0")
         
-        # Win Rate (Cerradas / Total)
         total_ops = len(df_cots)
         won_ops = len(df_cots[df_cots['estado'].isin(['Aprobada','Facturada'])])
         win_rate = (won_ops/total_ops*100) if total_ops > 0 else 0
         c3.metric("Tasa de Cierre", f"{win_rate:.1f}%")
         
-        # Facturado
         facturado = df_cots[df_cots['estado']=='Facturada']['total'].sum() if not df_cots.empty else 0
         c4.metric("Total Facturado", f"${facturado:,.0f}")
         
         st.divider()
         if not df_cots.empty:
-            # Gráfico simple de estado actual
             fig = px.pie(df_cots, names='estado', title="Distribución Estado Cotizaciones")
             st.plotly_chart(fig, use_container_width=True)
 
@@ -464,16 +473,14 @@ def modulo_dashboard():
             c1, c2 = st.columns(2)
             with c1:
                 st.subheader("Funnel por Etapa")
-                # Agrupar por etapa
                 funnel_data = df_leads['Etapa'].value_counts().reset_index()
                 funnel_data.columns = ['Etapa', 'Cantidad']
-                # Definir orden lógico si es posible
-                orden = ["Prospección", "Contacto", "Reunión", "Propuesta", "Negociación", "Cerrado Ganado"]
                 fig_funnel = px.funnel(funnel_data, x='Cantidad', y='Etapa', title="Embudo de Ventas")
                 st.plotly_chart(fig_funnel, use_container_width=True)
             
             with c2:
                 st.subheader("Leads por Origen")
+                # Aquí fallaba antes, ahora con la sanitización ya no debería
                 fig_source = px.bar(df_leads, x='Origen', title="Fuentes de Leads", color='Origen')
                 st.plotly_chart(fig_source, use_container_width=True)
                 
@@ -485,11 +492,9 @@ def modulo_dashboard():
     # 3. VENTAS (CIERRE)
     with tab_sale:
         if not df_cots.empty:
-            # Convertir fecha a datetime
             df_cots['fecha_dt'] = pd.to_datetime(df_cots['fecha'])
             df_cots['Mes'] = df_cots['fecha_dt'].dt.strftime('%Y-%m')
             
-            # Ventas por Mes (Solo Aprobadas/Facturadas)
             df_sales = df_cots[df_cots['estado'].isin(['Aprobada','Facturada'])]
             
             if not df_sales.empty:
@@ -502,9 +507,8 @@ def modulo_dashboard():
                 fig_bar = px.bar(df_sales, x='vendedor', y='total', color='pais', title="Ventas por Ejecutivo")
                 st.plotly_chart(fig_bar, use_container_width=True)
             else:
-                st.info("Aún no hay ventas cerradas (Aprobadas/Facturadas).")
+                st.info("Aún no hay ventas cerradas.")
                 
-            # Cotizaciones Totales por Mes (Actividad)
             st.divider()
             st.subheader("Actividad de Cotización Total")
             act_time = df_cots.groupby('Mes')['total'].count().reset_index()
@@ -535,7 +539,6 @@ def modulo_dashboard():
 
 def modulo_finanzas():
     st.title("💵 Gestión de Cobranza (Tabla)")
-    # Mantenemos esto simple como una vista de tabla operativa
     df = st.session_state['cotizaciones']
     if not df.empty:
         df_inv = df[df['estado'] == 'Facturada'].copy()

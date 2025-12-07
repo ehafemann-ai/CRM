@@ -11,7 +11,8 @@ from datetime import datetime, timedelta
 from fpdf import FPDF
 from streamlit_option_menu import option_menu
 import time
-import plotly.express as px # Asegúrate de tener plotly instalado (pip install plotly)
+import plotly.express as px
+import plotly.graph_objects as go
 
 # --- CONFIGURACIÓN GLOBAL ---
 st.set_page_config(page_title="TalentPro ERP", layout="wide", page_icon="🔒")
@@ -23,7 +24,6 @@ st.markdown("""
     .stMetric {background-color: #ffffff; border: 1px solid #e6e6e6; padding: 15px; border-radius: 8px; box-shadow: 2px 2px 5px rgba(0,0,0,0.05);}
     div.stButton > button:first-child { background-color: #003366; color: white; border-radius: 8px; font-weight: bold;}
     [data-testid="stSidebar"] { padding-top: 0rem; }
-    .status-tag { padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 0.8em; color: white; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -57,7 +57,6 @@ def github_push_json(url_key, data_dict, sha):
 # ==============================================================================
 # 2. INICIALIZACIÓN DE ESTADO
 # ==============================================================================
-# A) USUARIOS
 if 'users_db' not in st.session_state:
     users, sha = github_get_json('url_usuarios')
     admin_email = st.secrets['auth']['admin_user']
@@ -67,23 +66,17 @@ if 'users_db' not in st.session_state:
     st.session_state['users_db'] = users
     st.session_state['users_sha'] = sha
 
-# B) LEADS
 if 'leads_db' not in st.session_state:
     leads, sha_l = github_get_json('url_leads')
     st.session_state['leads_db'] = leads if isinstance(leads, list) else []
     st.session_state['leads_sha'] = sha_l
 
-# C) COTIZACIONES (Con nuevas columnas)
 if 'cotizaciones' not in st.session_state:
     cots, sha_c = github_get_json('url_cotizaciones')
     st.session_state['cotizaciones_sha'] = sha_c
-    
-    # Columnas esperadas
     cols = ['id', 'fecha', 'empresa', 'pais', 'total', 'moneda', 'estado', 'vendedor', 'oc', 'factura', 'pago']
-    
     if cots and isinstance(cots, list):
         df = pd.DataFrame(cots)
-        # Asegurar que existan las nuevas columnas aunque el JSON viejo no las tenga
         for c in cols:
             if c not in df.columns: df[c] = ""
         st.session_state['cotizaciones'] = df
@@ -95,7 +88,7 @@ if 'auth_status' not in st.session_state: st.session_state['auth_status'] = Fals
 if 'current_user' not in st.session_state: st.session_state['current_user'] = None
 
 # ==============================================================================
-# 3. LOGIN & PRECIOS
+# 3. LOGIN & DATOS EXTERNOS
 # ==============================================================================
 LOGO_PATH = "logo_talentpro.jpg"
 @st.cache_resource
@@ -253,7 +246,7 @@ def generar_pdf_final(emp, cli, items, calc, titulo, extras):
     return pdf.output(dest='S').encode('latin-1')
 
 # ==============================================================================
-# 5. MÓDULOS
+# 5. MÓDULOS APP
 # ==============================================================================
 def modulo_crm():
     st.title("📇 CRM & Gestión Comercial")
@@ -262,32 +255,77 @@ def modulo_crm():
     with tab1:
         with st.expander("➕ Nuevo Lead", expanded=False):
             with st.form("form_lead"):
-                st.subheader("Datos Lead")
-                c1,c2,c3=st.columns(3)
-                nom=c1.text_input("Cliente/Empresa"); area=c2.selectbox("Área",["Cono Sur","Brasil","Norte"]); pais=c3.selectbox("País",TODOS_LOS_PAISES)
-                c1,c2,c3=st.columns(3)
-                ind=c1.selectbox("Industria",["Tecnología","Minería","Retail","Servicios"]); web=c2.text_input("Web"); st.selectbox("Idioma",["ES","EN","PT"])
-                if st.form_submit_button("Guardar"):
-                    lead = {"id":int(time.time()), "Cliente":nom, "Area":area, "Pais":pais, "Industria":ind, "Responsable":st.session_state['current_user'], "Fecha":str(datetime.now().date())}
-                    new_db = st.session_state['leads_db'] + [lead]
+                st.subheader("1. Datos Generales")
+                c1, c2, c3 = st.columns(3)
+                nom_cliente = c1.text_input("Cliente / Empresa")
+                area = c2.selectbox("Área", ["Cono Sur", "Brasil", "Centroamérica"])
+                pais = c3.selectbox("País", TODOS_LOS_PAISES)
+                
+                c1, c2, c3 = st.columns(3)
+                ind = c1.selectbox("Industria", ["Tecnología", "Finanzas", "Retail", "Minería", "Salud", "Educación", "Otros"])
+                web = c2.text_input("Web")
+                idioma = c3.selectbox("Idioma", ["ES", "EN", "PT"])
+                
+                st.subheader("2. Contactos Clave")
+                contacts_data = []
+                for i in range(1, 4):
+                    c1, c2, c3 = st.columns(3)
+                    n = c1.text_input(f"Nombre {i}", key=f"n{i}")
+                    m = c2.text_input(f"Mail {i}", key=f"m{i}")
+                    t = c3.text_input(f"Tel {i}", key=f"t{i}")
+                    if n: contacts_data.append(f"{n} ({m})")
+
+                st.subheader("3. Seguimiento")
+                c1, c2 = st.columns(2)
+                origen = c1.selectbox("Origen", ["Inbound", "Outbound", "Referido", "Evento"])
+                etapa = c2.selectbox("Etapa Inicial", ["Prospección", "Contacto", "Reunión", "Propuesta"])
+                expectativa = st.text_area("Expectativa / Dolor Principal")
+                
+                if st.form_submit_button("Guardar Lead"):
+                    str_contactos = ", ".join(contacts_data)
+                    new_lead = {
+                        "id": int(time.time()), "Cliente": nom_cliente, "Area": area, "Pais": pais, "Industria": ind,
+                        "Web": web, "Contactos": str_contactos, "Origen": origen, "Etapa": etapa,
+                        "Expectativa": expectativa, "Responsable": st.session_state['current_user'], 
+                        "Fecha": str(datetime.now().date())
+                    }
+                    new_db = st.session_state['leads_db'] + [new_lead]
                     if github_push_json('url_leads', new_db, st.session_state.get('leads_sha')):
-                        st.session_state['leads_db'] = new_db; st.success("Guardado!"); time.sleep(1); st.rerun()
-        if st.session_state['leads_db']: st.dataframe(pd.DataFrame(st.session_state['leads_db']), use_container_width=True)
+                        st.session_state['leads_db'] = new_db
+                        st.success("Lead guardado correctamente.")
+                        time.sleep(1); st.rerun()
+                    else: st.error("Error al guardar en GitHub")
+
+        if st.session_state['leads_db']:
+            st.dataframe(pd.DataFrame(st.session_state['leads_db']), use_container_width=True)
+        else: st.info("No hay leads registrados.")
 
     with tab2:
         l_leads = [l['Cliente'] for l in st.session_state['leads_db']]
         l_cots = st.session_state['cotizaciones']['empresa'].unique().tolist()
         todos = sorted(list(set(l_leads + l_cots)))
-        sel = st.selectbox("Ver Cliente", [""] + todos)
+        sel = st.selectbox("Ver Cliente 360", [""] + todos)
+        
         if sel:
             df = st.session_state['cotizaciones']; dfc = df[df['empresa']==sel]
             tot = dfc['total'].sum() if not dfc.empty else 0
+            lead_info = next((l for l in st.session_state['leads_db'] if l['Cliente'] == sel), None)
+            
+            st.markdown(f"### 🏢 {sel}")
+            if lead_info:
+                c1,c2,c3 = st.columns(3)
+                c1.info(f"**Industria:** {lead_info.get('Industria','')}")
+                c2.info(f"**Web:** {lead_info.get('Web','')}")
+                c3.info(f"**Origen:** {lead_info.get('Origen','')}")
+                st.write(f"**Contactos:** {lead_info.get('Contactos','')}")
+                st.write(f"**Dolor:** {lead_info.get('Expectativa','')}")
+                st.divider()
+
             c1,c2 = st.columns(2); c1.metric("Total Cotizado", f"${tot:,.0f}"); c2.metric("# Cotizaciones", len(dfc))
-            st.dataframe(dfc[['fecha','id','pais','total','estado']], use_container_width=True)
+            st.dataframe(dfc[['fecha','id','pais','total','estado','factura','pago']], use_container_width=True)
 
 def modulo_cotizador():
     cl, ct = st.columns([1, 5]); idi = cl.selectbox("🌐", ["ES"]); txt = TEXTOS[idi]; ct.title(txt['title'])
-    
     c1,c2,c3,c4 = st.columns(4)
     c1.metric("UF", f"${TASAS['UF']:,.0f}"); c2.metric("USD", f"${TASAS['USD_CLP']:,.0f}"); c3.metric("BRL", f"{TASAS['USD_BRL']:.2f}")
     if c4.button("Actualizar Tasas"): obtener_indicadores.clear(); st.rerun()
@@ -339,10 +377,8 @@ def modulo_cotizador():
                 b64=base64.b64encode(pdf).decode('latin-1')
                 st.markdown(f'<a href="data:application/pdf;base64,{b64}" download="Cot_{nid}.pdf">📄 Descargar PDF</a>', unsafe_allow_html=True)
                 
-                # Campos vacíos para OC, Factura y Pago
                 row = {'id':nid, 'fecha':str(datetime.now().date()), 'empresa':emp, 'pais':ps, 'total':fin, 'moneda':ctx['mon'], 'estado':'Enviada', 'vendedor':ven, 'oc':'', 'factura':'', 'pago':'Pendiente'}
                 st.session_state['cotizaciones'] = pd.concat([st.session_state['cotizaciones'], pd.DataFrame([row])], ignore_index=True)
-                
                 if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
                     st.success("✅ Guardada en GitHub"); st.session_state['carrito']=[]; time.sleep(1)
                 else: st.warning("⚠️ PDF OK, falló GitHub")
@@ -353,110 +389,160 @@ def modulo_seguimiento():
     st.title("🤝 Seguimiento de Cotizaciones")
     df = st.session_state['cotizaciones']
     if df.empty: st.info("Sin datos."); return
-    
-    # Ordenar y asegurar columnas nuevas
     df = df.sort_values('fecha', ascending=False)
-    
     st.markdown("### 🔍 Gestión Comercial & Facturación")
-    
     for i, r in df.iterrows():
-        # Color del expander según estado
         label = f"{r['fecha']} | {r['id']} | {r['empresa']} | {r['moneda']} {r['total']:,.0f}"
         if r['estado'] == 'Facturada': label += " ✅"
         elif r['estado'] == 'Enviada': label += " ⏳"
         
         with st.expander(label):
             col_status, col_data, col_pay = st.columns([1, 1, 1])
-            
             with col_status:
                 st.caption("Flujo de Venta")
                 est_options = ["Enviada", "Aprobada", "Facturada", "Rechazada", "Perdida"]
                 idx = est_options.index(r['estado']) if r['estado'] in est_options else 0
-                new_status = st.selectbox("Estado Cotización", est_options, key=f"st_{r['id']}")
+                new_status = st.selectbox("Estado", est_options, key=f"st_{r['id']}")
 
             with col_data:
                 st.caption("Datos Administrativos")
-                # OC editable
                 new_oc = st.text_input("Orden de Compra (OC)", value=r.get('oc', ''), key=f"oc_{r['id']}")
-                # Factura solo si está aprobada o facturada
-                new_fact = st.text_input("N° Factura", value=r.get('factura', ''), key=f"ft_{r['id']}", 
-                                         disabled=(new_status in ["Enviada","Rechazada","Perdida"]))
+                new_fact = st.text_input("N° Factura", value=r.get('factura', ''), key=f"ft_{r['id']}", disabled=(new_status in ["Enviada","Rechazada","Perdida"]))
             
             with col_pay:
                 st.caption("Cobranza")
-                # Pago habilitado solo si hay número de factura
                 pay_options = ["Pendiente", "Pagada", "Vencida"]
                 curr_pay = r.get('pago', 'Pendiente')
-                idx_p = pay_options.index(curr_pay) if curr_pay in pay_options else 0
-                new_pay = st.selectbox("Estado Pago", pay_options, key=f"py_{r['id']}", 
-                                       disabled=(not new_fact))
+                new_pay = st.selectbox("Estado Pago", pay_options, key=f"py_{r['id']}", disabled=(not new_fact))
 
-            # Botón de actualización único por fila
-            if st.button("💾 Actualizar Registro", key=f"btn_{r['id']}"):
-                # Actualizar Dataframe local
+            if st.button("💾 Actualizar", key=f"btn_{r['id']}"):
                 st.session_state['cotizaciones'].at[i, 'estado'] = new_status
                 st.session_state['cotizaciones'].at[i, 'oc'] = new_oc
                 st.session_state['cotizaciones'].at[i, 'factura'] = new_fact
                 st.session_state['cotizaciones'].at[i, 'pago'] = new_pay
+                if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
+                    st.success("Actualizado"); time.sleep(1); st.rerun()
+
+# ==============================================================================
+# MÓDULO NUEVO: DASHBOARDS
+# ==============================================================================
+def modulo_dashboard():
+    st.title("📊 Dashboards & Analytics")
+    
+    # Preparamos dataframes
+    df_leads = pd.DataFrame(st.session_state['leads_db']) if st.session_state['leads_db'] else pd.DataFrame()
+    df_cots = st.session_state['cotizaciones']
+    
+    tab_gen, tab_lead, tab_sale, tab_bill = st.tabs(["📊 General", "📇 Leads (Funnel)", "📈 Cierre Ventas", "💵 Facturación"])
+    
+    # 1. GENERAL
+    with tab_gen:
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total Leads", len(df_leads))
+        # Total Cotizado (Sumatoria bruta, mezclando monedas por simplicidad visual)
+        c2.metric("Total Cotizado", f"${df_cots['total'].sum():,.0f}" if not df_cots.empty else "$0")
+        
+        # Win Rate (Cerradas / Total)
+        total_ops = len(df_cots)
+        won_ops = len(df_cots[df_cots['estado'].isin(['Aprobada','Facturada'])])
+        win_rate = (won_ops/total_ops*100) if total_ops > 0 else 0
+        c3.metric("Tasa de Cierre", f"{win_rate:.1f}%")
+        
+        # Facturado
+        facturado = df_cots[df_cots['estado']=='Facturada']['total'].sum() if not df_cots.empty else 0
+        c4.metric("Total Facturado", f"${facturado:,.0f}")
+        
+        st.divider()
+        if not df_cots.empty:
+            # Gráfico simple de estado actual
+            fig = px.pie(df_cots, names='estado', title="Distribución Estado Cotizaciones")
+            st.plotly_chart(fig, use_container_width=True)
+
+    # 2. LEADS
+    with tab_lead:
+        if not df_leads.empty:
+            c1, c2 = st.columns(2)
+            with c1:
+                st.subheader("Funnel por Etapa")
+                # Agrupar por etapa
+                funnel_data = df_leads['Etapa'].value_counts().reset_index()
+                funnel_data.columns = ['Etapa', 'Cantidad']
+                # Definir orden lógico si es posible
+                orden = ["Prospección", "Contacto", "Reunión", "Propuesta", "Negociación", "Cerrado Ganado"]
+                fig_funnel = px.funnel(funnel_data, x='Cantidad', y='Etapa', title="Embudo de Ventas")
+                st.plotly_chart(fig_funnel, use_container_width=True)
+            
+            with c2:
+                st.subheader("Leads por Origen")
+                fig_source = px.bar(df_leads, x='Origen', title="Fuentes de Leads", color='Origen')
+                st.plotly_chart(fig_source, use_container_width=True)
                 
-                # Push a GitHub
-                full_data = st.session_state['cotizaciones'].to_dict(orient='records')
-                if github_push_json('url_cotizaciones', full_data, st.session_state.get('cotizaciones_sha')):
-                    st.success("✅ Registro actualizado exitosamente")
-                    time.sleep(1)
-                    st.rerun()
-                else: st.error("Error al conectar con GitHub")
+            st.subheader("Leads por Industria")
+            st.bar_chart(df_leads['Industria'].value_counts())
+        else:
+            st.info("No hay datos de leads para generar reportes.")
+
+    # 3. VENTAS (CIERRE)
+    with tab_sale:
+        if not df_cots.empty:
+            # Convertir fecha a datetime
+            df_cots['fecha_dt'] = pd.to_datetime(df_cots['fecha'])
+            df_cots['Mes'] = df_cots['fecha_dt'].dt.strftime('%Y-%m')
+            
+            # Ventas por Mes (Solo Aprobadas/Facturadas)
+            df_sales = df_cots[df_cots['estado'].isin(['Aprobada','Facturada'])]
+            
+            if not df_sales.empty:
+                st.subheader("Evolución de Ventas Cerradas (Mensual)")
+                sales_time = df_sales.groupby('Mes')['total'].sum().reset_index()
+                fig_line = px.line(sales_time, x='Mes', y='total', markers=True, title="Ventas Acumuladas ($)")
+                st.plotly_chart(fig_line, use_container_width=True)
+                
+                st.subheader("Performance por Vendedor")
+                fig_bar = px.bar(df_sales, x='vendedor', y='total', color='pais', title="Ventas por Ejecutivo")
+                st.plotly_chart(fig_bar, use_container_width=True)
+            else:
+                st.info("Aún no hay ventas cerradas (Aprobadas/Facturadas).")
+                
+            # Cotizaciones Totales por Mes (Actividad)
+            st.divider()
+            st.subheader("Actividad de Cotización Total")
+            act_time = df_cots.groupby('Mes')['total'].count().reset_index()
+            fig_act = px.bar(act_time, x='Mes', y='total', title="Cantidad de Cotizaciones Enviadas")
+            st.plotly_chart(fig_act, use_container_width=True)
+        else:
+            st.info("Sin datos de cotizaciones.")
+
+    # 4. FACTURACIÓN
+    with tab_bill:
+        df_inv = df_cots[df_cots['estado']=='Facturada']
+        if not df_inv.empty:
+            c1, c2, c3 = st.columns(3)
+            tot_inv = df_inv['total'].sum()
+            tot_paid = df_inv[df_inv['pago']=='Pagada']['total'].sum()
+            tot_pend = tot_inv - tot_paid
+            
+            c1.metric("Total Facturado", f"${tot_inv:,.0f}")
+            c2.metric("Cobrado (Pagado)", f"${tot_paid:,.0f}", delta=f"{tot_paid/tot_inv*100:.1f}%")
+            c3.metric("Por Cobrar (Pendiente)", f"${tot_pend:,.0f}", delta_color="inverse")
+            
+            st.subheader("Estado de Pagos")
+            fig_pay = px.pie(df_inv, names='pago', title="Status de Cobranza", hole=0.4, 
+                             color_discrete_map={'Pagada':'green', 'Pendiente':'orange', 'Vencida':'red'})
+            st.plotly_chart(fig_pay, use_container_width=True)
+        else:
+            st.info("No hay facturas emitidas.")
 
 def modulo_finanzas():
-    st.title("💰 Panel Financiero")
+    st.title("💵 Gestión de Cobranza (Tabla)")
+    # Mantenemos esto simple como una vista de tabla operativa
     df = st.session_state['cotizaciones']
-    
-    if df.empty: st.info("No hay datos financieros."); return
-    
-    tab_dash, tab_cobranza = st.tabs(["📊 Dashboard Gerencial", "💵 Gestión de Cobranza"])
-    
-    with tab_dash:
-        # 1. COTIZACIONES ABIERTAS
-        st.subheader("Estado del Pipeline (Abierto)")
-        df_open = df[df['estado'].isin(['Enviada'])]
-        
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Cotizaciones Abiertas", len(df_open))
-        sum_open = df_open['total'].sum()
-        c2.metric("Monto en Juego (Aprox USD)", f"${sum_open:,.0f}") # Asumiendo mezcla de monedas, solo suma nominal
-        
-        if not df_open.empty:
-            fig = px.bar(df_open, x='vendedor', y='total', color='pais', title="Oportunidades por Vendedor")
-            st.plotly_chart(fig, use_container_width=True)
-        else: st.info("No hay cotizaciones abiertas.")
-
-        st.divider()
-        
-        # 2. VENTAS CERRADAS
-        st.subheader("Ventas Cerradas (Facturadas)")
-        df_closed = df[df['estado'] == 'Facturada']
-        if not df_closed.empty:
-            c1, c2 = st.columns(2)
-            c1.metric("Total Facturado", f"${df_closed['total'].sum():,.0f}")
-            c2.metric("Facturas Emitidas", len(df_closed))
-            
-            # Grafico pagos
-            fig2 = px.pie(df_closed, names='pago', title="Estado de Pagos", hole=0.4, color_discrete_map={'Pagada':'green', 'Pendiente':'orange', 'Vencida':'red'})
-            st.plotly_chart(fig2, use_container_width=True)
-
-    with tab_cobranza:
-        st.subheader("Control de Facturas")
-        # Filtramos solo las que tienen estado 'Facturada'
+    if not df.empty:
         df_inv = df[df['estado'] == 'Facturada'].copy()
-        
         if not df_inv.empty:
-            # Seleccionar columnas relevantes
-            cols_show = ['fecha', 'factura', 'oc', 'empresa', 'total', 'moneda', 'pago']
-            st.dataframe(df_inv[cols_show].sort_values('factura', ascending=False), use_container_width=True)
-            
-            st.caption("Para actualizar el estado de pago, vaya al módulo de Seguimiento.")
-        else:
-            st.info("No hay facturas emitidas aún.")
+            st.dataframe(df_inv[['fecha', 'factura', 'oc', 'empresa', 'total', 'moneda', 'pago']].sort_values('factura', ascending=False), use_container_width=True)
+        else: st.info("No hay facturas.")
+    else: st.info("Sin datos.")
 
 def modulo_admin():
     st.title("Admin Users"); st.dataframe(pd.DataFrame(st.session_state['users_db']).T)
@@ -465,7 +551,7 @@ def modulo_admin():
 with st.sidebar:
     if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=130)
     role = st.session_state.get('current_role', 'Comercial')
-    opts = ["CRM", "Cotizador", "Seguimiento", "Finanzas"]; icos = ['person', 'file', 'check', 'currency-dollar']
+    opts = ["CRM", "Cotizador", "Seguimiento", "Dashboards", "Finanzas"]; icos = ['person', 'file', 'check', 'bar-chart', 'currency-dollar']
     if role == "Super Admin": opts.append("Usuarios"); icos.append("people")
     menu = option_menu("Menú", opts, icons=icos, default_index=0)
     if st.button("Salir"): logout()
@@ -473,5 +559,6 @@ with st.sidebar:
 if menu == "CRM": modulo_crm()
 elif menu == "Cotizador": modulo_cotizador()
 elif menu == "Seguimiento": modulo_seguimiento()
+elif menu == "Dashboards": modulo_dashboard()
 elif menu == "Finanzas": modulo_finanzas()
 elif menu == "Usuarios": modulo_admin()

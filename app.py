@@ -88,6 +88,7 @@ if 'users_db' not in st.session_state:
         hashed = bcrypt.hashpw(st.secrets['auth']['admin_pass'].encode(), bcrypt.gensalt()).decode()
         users = {admin_email: {"name": "Super Admin", "role": "Super Admin", "password_hash": hashed}}
     
+    # Inicialización LIMPIA de estructura organizacional
     if '_CONFIG_ORG' not in users:
         users['_CONFIG_ORG'] = {} 
         
@@ -275,14 +276,13 @@ def clasificar_cliente(monto):
     if 5000 <= monto < 10000: return "Chico"
     return "Micro"
 
-# --- HELPER PARA EQUIPOS ---
 def get_user_teams_list(user_data):
     """Normaliza el campo 'equipo' que puede ser string antiguo o lista nueva."""
     raw = user_data.get('equipo', [])
     if isinstance(raw, str):
         if raw == "N/A" or not raw: return []
         return [raw]
-    return raw # Es lista
+    return raw
 
 # --- PDF ENGINE ---
 class PDF(FPDF):
@@ -497,12 +497,7 @@ def modulo_cotizador():
                     links_html = f'<a href="data:application/pdf;base64,{b64}" download="Cot_{nid}.pdf">📄 Descargar PDF</a>'
                     st.success("✅ Cotización generada")
                 st.markdown(links_html, unsafe_allow_html=True)
-                row = {
-                    'id':nid, 'fecha':str(datetime.now().date()), 'empresa':emp, 'pais':ps, 'total':fin, 'moneda':ctx['mon'], 
-                    'estado':'Enviada', 'vendedor':ven, 'equipo_asignado': sel_team_cot,
-                    'oc':'', 'factura':'', 'pago':'Pendiente', 'hes':False, 'hes_num':'', 
-                    'items': st.session_state['carrito'], 'pdf_data': ext, 'idioma': idi
-                }
+                row = {'id':nid, 'fecha':str(datetime.now().date()), 'empresa':emp, 'pais':ps, 'total':fin, 'moneda':ctx['mon'], 'estado':'Enviada', 'vendedor':ven, 'equipo_asignado': sel_team_cot, 'oc':'', 'factura':'', 'pago':'Pendiente', 'hes':False, 'hes_num':'', 'items': st.session_state['carrito'], 'pdf_data': ext, 'idioma': idi}
                 st.session_state['cotizaciones'] = pd.concat([st.session_state['cotizaciones'], pd.DataFrame([row])], ignore_index=True)
                 if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
                     st.info("Guardado en Base de Datos"); st.session_state['carrito']=[]; time.sleep(2)
@@ -515,11 +510,10 @@ def modulo_seguimiento():
     df = st.session_state['cotizaciones']
     if df.empty: st.info("Sin datos."); return
     df = df.sort_values('fecha', ascending=False)
-    
     curr_user = st.session_state['current_user']
     curr_role = st.session_state.get('current_role', 'Comercial')
     
-    # Filtro por equipo
+    # Filtro por equipo (lista)
     if curr_role == 'Comercial':
         my_teams = get_user_teams_list(st.session_state['users_db'][curr_user])
         allowed_sellers = []
@@ -537,7 +531,7 @@ def modulo_seguimiento():
     
     if not ver_historial:
         df = df[df['estado'].isin(['Enviada', 'Aprobada'])]
-        if df.empty: st.warning("No tienes cotizaciones abiertas. Marca 'Ver Historial' para ver cerradas.")
+        if df.empty: st.warning("No tienes cotizaciones abiertas.")
 
     for i, r in df.iterrows():
         lang_tag = f"[{r.get('idioma','ES')}]"
@@ -561,7 +555,7 @@ def modulo_seguimiento():
             with col_req:
                 st.caption("Requisitos")
                 hes_check = st.checkbox("Requiere HES", value=r.get('hes', False), key=f"hs_{r['id']}", disabled=disabled_st)
-                if hes_check: st.warning("⚠️ Requiere HES para facturar.")
+                if hes_check: st.warning("⚠️ Finanzas sabrá que debe pedir HES antes de facturar.")
 
             if not disabled_st and st.button("Actualizar Venta", key=f"btn_{r['id']}"):
                 st.session_state['cotizaciones'].at[i, 'estado'] = new_status
@@ -697,6 +691,11 @@ def modulo_dashboard():
     
     # 1. Asegurar DataFrame de Cotizaciones y su columna Año
     df_cots = st.session_state['cotizaciones'].copy()
+    
+    # --- SANITIZACIÓN: Asegurar columna equipo ---
+    if 'equipo_asignado' not in df_cots.columns:
+        df_cots['equipo_asignado'] = "N/A"
+    
     if not df_cots.empty:
         df_cots['fecha_dt'] = pd.to_datetime(df_cots['fecha'], errors='coerce')
         df_cots = df_cots.dropna(subset=['fecha_dt'])
@@ -758,7 +757,7 @@ def modulo_dashboard():
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Total Leads", len(df_leads_filtered))
         c2.metric("Cant. Abiertas", cant_abiertas) 
-        c3.metric("Monto en Juego (Open)", f"${monto_abierto_usd:,.0f}")
+        c3.metric("Pipeline (USD)", f"${monto_abierto_usd:,.0f}")
         
         total_ops = len(df_cots_filtered); won_ops = len(df_cots_filtered[df_cots_filtered['estado'].isin(['Aprobada','Facturada'])])
         win_rate = (won_ops/total_ops*100) if total_ops > 0 else 0

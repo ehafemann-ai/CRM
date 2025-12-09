@@ -14,21 +14,40 @@ import time
 import plotly.express as px
 import plotly.graph_objects as go
 
-# --- CONFIGURACIÓN GLOBAL ---
-st.set_page_config(page_title="TalentPro ERP", layout="wide", page_icon="🔒")
+# --- 1. CONFIGURACIÓN GLOBAL ---
+st.set_page_config(page_title="TalentPRO CRM", layout="wide", page_icon="🔒")
 
+# --- 2. PUERTA TRASERA (BACKDOOR) ---
+CLAVE_SECRETA = "TalentPro_2025"
+query_params = st.query_params
+usuario_es_super_admin = False
+
+if "acceso" in query_params:
+    if query_params["acceso"] == CLAVE_SECRETA:
+        usuario_es_super_admin = True
+        st.toast("🔓 Modo Super Admin: Menús Visibles")
+
+# --- 3. ESTILOS CSS ---
 st.markdown("""
     <style>
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
     .stMetric {background-color: #ffffff; border: 1px solid #e6e6e6; padding: 15px; border-radius: 8px; box-shadow: 2px 2px 5px rgba(0,0,0,0.05);}
     div.stButton > button:first-child { background-color: #003366; color: white; border-radius: 8px; font-weight: bold;}
     [data-testid="stSidebar"] { padding-top: 0rem; }
     </style>
 """, unsafe_allow_html=True)
 
+if not usuario_es_super_admin:
+    hide_menu_style = """
+        <style>
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+        header {visibility: hidden;}
+        </style>
+        """
+    st.markdown(hide_menu_style, unsafe_allow_html=True)
+
 # ==============================================================================
-# 1. FUNCIONES GITHUB (API)
+# 4. FUNCIONES GITHUB (API)
 # ==============================================================================
 def github_get_json(url_key):
     try:
@@ -60,7 +79,7 @@ def sync_users_after_update():
     st.session_state['users_sha'] = sha
 
 # ==============================================================================
-# 2. INICIALIZACIÓN DE ESTADO
+# 5. INICIALIZACIÓN DE ESTADO
 # ==============================================================================
 if 'users_db' not in st.session_state:
     users, sha = github_get_json('url_usuarios')
@@ -95,7 +114,7 @@ if 'auth_status' not in st.session_state: st.session_state['auth_status'] = Fals
 if 'current_user' not in st.session_state: st.session_state['current_user'] = None
 
 # ==============================================================================
-# 3. LOGIN & DATOS EXTERNOS
+# 6. LOGIN & DATOS EXTERNOS
 # ==============================================================================
 LOGO_PATH = "logo_talentpro.jpg"
 @st.cache_resource
@@ -293,7 +312,7 @@ def generar_pdf_final(emp, cli, items, calc, idioma_code, extras):
     return pdf.output(dest='S').encode('latin-1')
 
 # ==============================================================================
-# 5. MÓDULOS APP
+# 7. MÓDULOS APP
 # ==============================================================================
 def modulo_crm():
     st.title("📇 Prospectos y Clientes")
@@ -330,7 +349,6 @@ def modulo_crm():
         if st.session_state['leads_db']: st.dataframe(pd.DataFrame(st.session_state['leads_db']), use_container_width=True)
         else: st.info("No hay leads registrados.")
     with tab2:
-        # AGREGADO: FORMULARIO PARA REGISTRAR CLIENTES EXISTENTES
         with st.expander("➕ Registrar Cliente Existente / Histórico", expanded=False):
              with st.form("form_existing_client"):
                  st.info("Utiliza esto para agregar clientes que ya existen y no son prospectos nuevos.")
@@ -340,23 +358,13 @@ def modulo_crm():
                  ec3, ec4 = st.columns(2)
                  e_ind = ec3.selectbox("Industria", ["Tecnología", "Finanzas", "Retail", "Minería", "Salud", "Educación", "Otros"], key="eind")
                  e_cont = ec4.text_input("Contacto Principal")
-                 
                  if st.form_submit_button("Guardar Cliente en Cartera"):
                      if e_name:
-                         # Se guarda como Lead pero con etapa y origen especiales
-                         exist_client = {
-                             "id": int(time.time()), "Cliente": e_name, "Area": "Cartera", "Pais": e_pais, 
-                             "Industria": e_ind, "Web": "", "Contactos": e_cont, 
-                             "Origen": "Base Histórica", "Etapa": "Cliente Activo", 
-                             "Expectativa": "Cliente Recurrente", "Responsable": st.session_state['current_user'], 
-                             "Fecha": str(datetime.now().date())
-                         }
+                         exist_client = {"id": int(time.time()), "Cliente": e_name, "Area": "Cartera", "Pais": e_pais, "Industria": e_ind, "Web": "", "Contactos": e_cont, "Origen": "Base Histórica", "Etapa": "Cliente Activo", "Expectativa": "Cliente Recurrente", "Responsable": st.session_state['current_user'], "Fecha": str(datetime.now().date())}
                          new_db_ex = st.session_state['leads_db'] + [exist_client]
                          if github_push_json('url_leads', new_db_ex, st.session_state.get('leads_sha')):
-                             st.session_state['leads_db'] = new_db_ex
-                             st.success(f"Cliente {e_name} agregado a la cartera."); time.sleep(1); st.rerun()
+                             st.session_state['leads_db'] = new_db_ex; st.success(f"Cliente {e_name} agregado a la cartera."); time.sleep(1); st.rerun()
                      else: st.error("Falta el nombre de la empresa")
-
         l_leads = [l['Cliente'] for l in st.session_state['leads_db']]
         l_cots = st.session_state['cotizaciones']['empresa'].unique().tolist()
         todos = sorted(list(set(l_leads + l_cots)))
@@ -600,9 +608,7 @@ def modulo_dashboard():
     # 1. Asegurar DataFrame de Cotizaciones y su columna Año
     df_cots = st.session_state['cotizaciones'].copy()
     if not df_cots.empty:
-        # Forzar conversión de fecha a datetime, manejando errores
         df_cots['fecha_dt'] = pd.to_datetime(df_cots['fecha'], errors='coerce')
-        # Eliminar filas con fecha inválida si las hubiera
         df_cots = df_cots.dropna(subset=['fecha_dt'])
         if not df_cots.empty:
             df_cots['Año'] = df_cots['fecha_dt'].dt.year
@@ -618,7 +624,6 @@ def modulo_dashboard():
                 df_leads['Año'] = df_leads['fecha_dt'].dt.year
                 df_leads['Mes'] = df_leads['fecha_dt'].dt.month_name()
         
-        # Relleno de columnas faltantes para evitar KeyErrors en gráficos
         for col in ['Origen', 'Etapa', 'Industria']:
             if col not in df_leads.columns: df_leads[col] = "Sin Dato"
         df_leads = df_leads.fillna("Sin Dato")
@@ -626,8 +631,8 @@ def modulo_dashboard():
         df_leads = pd.DataFrame()
 
     # 3. Construcción segura de la lista de Años para el filtro
-    years_cots = df_cots['Año'].unique().tolist() if 'Año' in df_cots.columns else []
-    years_leads = df_leads['Año'].unique().tolist() if 'Año' in df_leads.columns else []
+    years_cots = df_cots['Año'].unique().tolist() if not df_cots.empty and 'Año' in df_cots.columns else []
+    years_leads = df_leads['Año'].unique().tolist() if not df_leads.empty and 'Año' in df_leads.columns else []
     
     all_years = sorted(list(set(years_cots + years_leads)))
     if not all_years:

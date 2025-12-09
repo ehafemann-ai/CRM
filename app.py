@@ -138,7 +138,8 @@ def login_page():
     with c2:
         st.markdown("<br><br>", unsafe_allow_html=True)
         if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=300)
-        st.markdown("### Acceso Seguro ERP")
+        # --- CAMBIO REALIZADO AQUÍ ---
+        st.markdown("### Acceso Seguro CRM TalentPRO")
         with st.form("login_form"):
             u = st.text_input("Usuario", key="login_user")
             p = st.text_input("Contraseña", type="password", key="login_pass")
@@ -449,11 +450,27 @@ def modulo_cotizador():
     v_uf = TASAS['UF']; v_usd = TASAS['USD_CLP']; v_brl = TASAS['USD_BRL']
     c1.metric("UF", f"${v_uf:,.0f}"); c2.metric("USD", f"${v_usd:,.0f}"); c3.metric("BRL", f"{v_brl:.2f}")
     if c4.button("Actualizar Tasas"): obtener_indicadores.clear(); st.rerun()
+    if v_uf == 0 or v_usd == 0: st.error("⚠️ Error cargando indicadores. Intenta 'Actualizar Tasas'.")
+
     st.markdown("---"); c1, c2 = st.columns([1, 2])
     idx = TODOS_LOS_PAISES.index("Chile") if "Chile" in TODOS_LOS_PAISES else 0
     ps = c1.selectbox("🌎 País", TODOS_LOS_PAISES, index=idx); ctx = obtener_contexto(ps)
     c2.info(f"Moneda: **{ctx['mon']}** | Tarifas: **{ctx['tipo']}** {ctx.get('niv', '')}")
     st.markdown("---"); cc1,cc2,cc3,cc4=st.columns(4)
+    
+    # Lógica de asignación de equipo si el usuario tiene múltiples
+    curr_user_data = st.session_state['users_db'].get(st.session_state['current_user'], {})
+    user_teams = get_user_teams_list(curr_user_data)
+    
+    if len(user_teams) > 1:
+        sel_team_cot = cc4.selectbox("Asignar a Célula", user_teams)
+    elif len(user_teams) == 1:
+        sel_team_cot = user_teams[0]
+        cc4.text_input("Célula", value=sel_team_cot, disabled=True)
+    else:
+        sel_team_cot = "N/A"
+        cc4.text_input("Célula", value="N/A", disabled=True)
+        
     clientes_list = sorted(list(set([x['Cliente'] for x in st.session_state['leads_db']] + st.session_state['cotizaciones']['empresa'].unique().tolist())))
     emp = cc1.selectbox(txt['client'], [""]+clientes_list)
     con = cc2.text_input("Contacto"); ema = cc3.text_input("Email")
@@ -518,25 +535,7 @@ def modulo_cotizador():
                     links_html = f'<a href="data:application/pdf;base64,{b64}" download="Cot_{nid}.pdf">📄 Descargar PDF</a>'
                     st.success("✅ Cotización generada")
                 st.markdown(links_html, unsafe_allow_html=True)
-                
-                # Asignación automática de equipo si es único
-                curr_user_data = st.session_state['users_db'].get(st.session_state['current_user'], {})
-                user_teams = get_user_teams_list(curr_user_data)
-                
-                # Si tiene más de un equipo, la UI ya mostró un selector (sel_team_cot se define en el módulo cotizador, 
-                # pero como está dentro de un 'if', necesitamos asegurarnos que se captura arriba.
-                # CORRECCIÓN: Movemos la lógica de guardado dentro del scope donde sel_team_cot existe o lo recuperamos.
-                # En este diseño simplificado, asumimos que si es multi-equipo el usuario lo seleccionó arriba.
-                # Pero 'sel_team_cot' es variable local de la sección superior. 
-                # Para simplificar, si es multi-equipo, tomamos el primero por defecto si no se seleccionó (o reimplementamos el selector dentro del form).
-                # Mejor solución: Recuperar la selección del estado de sesión o re-implementar la lógica de selección aquí mismo.
-                # Dado que el botón está dentro del mismo render, podemos acceder a los widgets si tienen key, pero sel_team_cot no tenía key única.
-                # Asumiremos el primer equipo si no hay selección explícita guardada.
-                
-                assigned_team = user_teams[0] if user_teams else "N/A"
-                # (En una implementación real más compleja usaríamos st.session_state para persistir la selección del equipo entre reruns)
-
-                row = {'id':nid, 'fecha':str(datetime.now().date()), 'empresa':emp, 'pais':ps, 'total':fin, 'moneda':ctx['mon'], 'estado':'Enviada', 'vendedor':ven, 'equipo_asignado': assigned_team, 'oc':'', 'factura':'', 'pago':'Pendiente', 'hes':False, 'hes_num':'', 'items': st.session_state['carrito'], 'pdf_data': ext, 'idioma': idi}
+                row = {'id':nid, 'fecha':str(datetime.now().date()), 'empresa':emp, 'pais':ps, 'total':fin, 'moneda':ctx['mon'], 'estado':'Enviada', 'vendedor':ven, 'equipo_asignado': sel_team_cot, 'oc':'', 'factura':'', 'pago':'Pendiente', 'hes':False, 'hes_num':'', 'items': st.session_state['carrito'], 'pdf_data': ext, 'idioma': idi}
                 st.session_state['cotizaciones'] = pd.concat([st.session_state['cotizaciones'], pd.DataFrame([row])], ignore_index=True)
                 if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
                     st.info("Guardado en Base de Datos"); st.session_state['carrito']=[]; time.sleep(2)
@@ -552,13 +551,9 @@ def modulo_seguimiento():
     curr_user = st.session_state['current_user']
     curr_role = st.session_state.get('current_role', 'Comercial')
     if curr_role == 'Comercial':
-        my_teams = get_user_teams_list(st.session_state['users_db'][curr_user])
-        allowed_sellers = []
-        for u, d in st.session_state['users_db'].items():
-             u_teams = get_user_teams_list(d)
-             if set(u_teams) & set(my_teams):
-                 allowed_sellers.append(d['name'])
-        df = df[df['vendedor'].isin(allowed_sellers)]
+        my_team = st.session_state['users_db'][curr_user].get('equipo', 'N/A')
+        team_names = [u['name'] for k, u in st.session_state['users_db'].items() if u.get('equipo') == my_team]
+        df = df[df['vendedor'].isin(team_names)]
     c1, c2 = st.columns([3, 1])
     with c1: st.info("ℹ️ Gestión: Cambia estado a 'Aprobada' para que Finanzas facture.")
     with c2: ver_historial = st.checkbox("📂 Ver Historial Completo", value=False)
@@ -695,6 +690,7 @@ def modulo_dashboard():
     st.title("📊 Dashboards & Analytics")
     st.sidebar.markdown("### 📅 Filtro de Tiempo")
     
+    # 1. Asegurar DataFrame de Cotizaciones y su columna Año
     df_cots = st.session_state['cotizaciones'].copy()
     if not df_cots.empty:
         df_cots['fecha_dt'] = pd.to_datetime(df_cots['fecha'], errors='coerce')
@@ -703,6 +699,7 @@ def modulo_dashboard():
             df_cots['Año'] = df_cots['fecha_dt'].dt.year
             df_cots['Mes'] = df_cots['fecha_dt'].dt.month_name()
     
+    # 2. Asegurar DataFrame de Leads y su columna Año
     if st.session_state['leads_db']:
         df_leads = pd.DataFrame(st.session_state['leads_db'])
         if 'Fecha' in df_leads.columns:
@@ -718,6 +715,7 @@ def modulo_dashboard():
     else: 
         df_leads = pd.DataFrame()
 
+    # 3. Construcción segura de la lista de Años para el filtro
     years_cots = df_cots['Año'].unique().tolist() if not df_cots.empty and 'Año' in df_cots.columns else []
     years_leads = df_leads['Año'].unique().tolist() if not df_leads.empty and 'Año' in df_leads.columns else []
     
@@ -727,6 +725,7 @@ def modulo_dashboard():
 
     selected_years = st.sidebar.multiselect("Seleccionar Años", all_years, default=[max(all_years)])
     
+    # 4. Aplicar Filtro Temporal de forma segura
     if not df_cots.empty and 'Año' in df_cots.columns:
         df_cots_filtered = df_cots[df_cots['Año'].isin(selected_years)]
     else: 
@@ -803,7 +802,7 @@ def modulo_dashboard():
                         team_goal_rev = sum(float(t_metas.get(str(y), 0)) for y in selected_years)
                         if team_goal_rev == 0: team_goal_rev = float(team_config_db[team_name].get('meta', 0))
                     
-                    team_members = [d['name'] for e,d in users.items() if d.get('equipo') == team_name]
+                    team_members = [d['name'] for e,d in users.items() if team_name in get_user_teams_list(d)]
                     df_team_sales = df_cots_filtered[(df_cots_filtered['vendedor'].isin(team_members)) & (df_cots_filtered['estado'] == 'Facturada')].copy()
                     
                     if not df_team_sales.empty:
@@ -879,15 +878,12 @@ def modulo_admin():
                 
                 # Gestión de Miembros en la Célula
                 all_users_emails = [k for k in users.keys() if not k.startswith("_")]
-                # Filtrar usuarios que tienen este equipo en su lista
                 current_members = [u for u in all_users_emails if team in get_user_teams_list(users[u])]
                 
                 with c3.expander("Gestionar Miembros y Sub Células"):
-                    # Asignación masiva de miembros a la célula
                     st.markdown("###### Miembros de la Célula")
                     new_members = st.multiselect(f"Usuarios en {team}", all_users_emails, default=current_members, key=f"mem_{team}")
                     if st.button(f"Actualizar Miembros {team}", key=f"upd_mem_{team}"):
-                        # Logic: Add team to selected, remove from unselected
                         for u_email in all_users_emails:
                             u_teams = get_user_teams_list(users[u_email])
                             if u_email in new_members:
@@ -1083,6 +1079,7 @@ def modulo_admin():
 with st.sidebar:
     if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=130)
     role = st.session_state.get('current_role', 'Comercial')
+    # REORDERED MENU: Dashboard is now first
     opts = ["Dashboards", "Seguimiento", "Prospectos y Clientes", "Cotizador", "Finanzas"]; icos = ['bar-chart', 'check', 'person', 'file', 'currency-dollar']
     if role == "Super Admin": opts.append("Usuarios"); icos.append("people")
     menu = option_menu("Menú", opts, icons=icos, default_index=0)

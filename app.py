@@ -33,8 +33,6 @@ st.markdown("""
     .stMetric {background-color: #ffffff; border: 1px solid #e6e6e6; padding: 15px; border-radius: 8px; box-shadow: 2px 2px 5px rgba(0,0,0,0.05);}
     div.stButton > button:first-child { background-color: #003366; color: white; border-radius: 8px; font-weight: bold;}
     [data-testid="stSidebar"] { padding-top: 0rem; }
-    /* Estilo para tarjetas de admin */
-    .admin-card { padding: 20px; background-color: #f0f2f6; border-radius: 10px; margin-bottom: 20px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -278,7 +276,6 @@ def clasificar_cliente(monto):
     return "Micro"
 
 def get_user_teams_list(user_data):
-    """Normaliza el campo 'equipo' que puede ser string antiguo o lista nueva."""
     raw = user_data.get('equipo', [])
     if isinstance(raw, str):
         if raw == "N/A" or not raw: return []
@@ -339,7 +336,8 @@ def generar_pdf_final(emp, cli, items, calc, idioma_code, extras):
 # ==============================================================================
 def modulo_crm():
     st.title("📇 Prospectos y Clientes")
-    tab1, tab2 = st.tabs(["📋 Gestión de Leads", "🏢 Cartera Clientes"])
+    tab1, tab2, tab_import = st.tabs(["📋 Gestión de Leads", "🏢 Cartera Clientes", "📥 Importar Masivo"])
+    
     with tab1:
         with st.expander("➕ Nuevo Lead", expanded=False):
             with st.form("form_lead"):
@@ -371,6 +369,7 @@ def modulo_crm():
                     else: st.error("Error al guardar en GitHub")
         if st.session_state['leads_db']: st.dataframe(pd.DataFrame(st.session_state['leads_db']), use_container_width=True)
         else: st.info("No hay leads registrados.")
+    
     with tab2:
         with st.expander("➕ Registrar Cliente Existente / Histórico", expanded=False):
              with st.form("form_existing_client"):
@@ -406,6 +405,41 @@ def modulo_crm():
             c1,c2,c3,c4 = st.columns(4)
             c1.metric("Total Cotizado", f"${tot:,.0f}"); c2.metric("Total Facturado", f"${fac_cli:,.0f}"); c3.metric("Total Pagado", f"${pag_cli:,.0f}"); c4.metric("# Cotizaciones", len(dfc))
             st.dataframe(dfc[['fecha','id','pais','total','estado','factura','pago']], use_container_width=True)
+
+    with tab_import:
+        st.subheader("Carga Masiva de Leads / Clientes (CSV)")
+        st.info("El CSV debe tener las siguientes columnas: Cliente, Pais, Industria, Contacto, Email, Origen, Etapa")
+        uploaded_file = st.file_uploader("Subir CSV de Leads", type=["csv"])
+        if uploaded_file is not None:
+            try:
+                df_up = pd.read_csv(uploaded_file)
+                st.write("Vista Previa:", df_up.head())
+                if st.button("Procesar Importación"):
+                    new_entries = []
+                    for _, row in df_up.iterrows():
+                        new_entries.append({
+                            "id": int(time.time()) + random.randint(1, 1000),
+                            "Cliente": row.get('Cliente', 'Sin Nombre'),
+                            "Area": "Importado",
+                            "Pais": row.get('Pais', 'Desconocido'),
+                            "Industria": row.get('Industria', 'Otros'),
+                            "Web": "",
+                            "Contactos": f"{row.get('Contacto','')} ({row.get('Email','')})",
+                            "Origen": row.get('Origen', 'Importación'),
+                            "Etapa": row.get('Etapa', 'Prospección'),
+                            "Expectativa": "Importación Masiva",
+                            "Responsable": st.session_state['current_user'],
+                            "Fecha": str(datetime.now().date())
+                        })
+                    
+                    final_db = st.session_state['leads_db'] + new_entries
+                    if github_push_json('url_leads', final_db, st.session_state.get('leads_sha')):
+                        st.session_state['leads_db'] = final_db
+                        st.success(f"Se importaron {len(new_entries)} registros correctamente."); time.sleep(1); st.rerun()
+                    else:
+                        st.error("Error al guardar en GitHub")
+            except Exception as e:
+                st.error(f"Error al leer el archivo: {e}")
 
 def modulo_cotizador():
     cl, ct = st.columns([1, 5]); idi = cl.selectbox("🌐", ["ES", "PT", "EN"]); txt = TEXTOS[idi]; ct.title(txt['title'])
@@ -513,19 +547,10 @@ def modulo_seguimiento():
     df = df.sort_values('fecha', ascending=False)
     curr_user = st.session_state['current_user']
     curr_role = st.session_state.get('current_role', 'Comercial')
-    
-    # Filtro por equipo (lista)
     if curr_role == 'Comercial':
-        my_teams = get_user_teams_list(st.session_state['users_db'][curr_user])
-        allowed_sellers = []
-        for u, d in st.session_state['users_db'].items():
-             u_teams = get_user_teams_list(d)
-             if set(u_teams) & set(my_teams):
-                 allowed_sellers.append(d['name'])
-        
-        # Filtro: O soy yo el vendedor, O el vendedor es de mi equipo
-        df = df[df['vendedor'].isin(allowed_sellers)]
-    
+        my_team = st.session_state['users_db'][curr_user].get('equipo', 'N/A')
+        team_names = [u['name'] for k, u in st.session_state['users_db'].items() if u.get('equipo') == my_team]
+        df = df[df['vendedor'].isin(team_names)]
     c1, c2 = st.columns([3, 1])
     with c1: st.info("ℹ️ Gestión: Cambia estado a 'Aprobada' para que Finanzas facture.")
     with c2: ver_historial = st.checkbox("📂 Ver Historial Completo", value=False)
@@ -726,6 +751,7 @@ def modulo_dashboard():
         c1.metric("Total Leads", len(df_leads_filtered))
         c2.metric("Cant. Abiertas", cant_abiertas) 
         c3.metric("Monto en Juego (Open)", f"${monto_abierto_usd:,.0f}")
+        
         total_ops = len(df_cots_filtered); won_ops = len(df_cots_filtered[df_cots_filtered['estado'].isin(['Aprobada','Facturada'])])
         win_rate = (won_ops/total_ops*100) if total_ops > 0 else 0
         c4.metric("Tasa de Cierre", f"{win_rate:.1f}%")
@@ -897,7 +923,7 @@ def modulo_admin():
     st.title("👥 Administración de Usuarios y Metas")
     users = st.session_state['users_db']
     
-    tab_list, tab_create, tab_teams, tab_reset = st.tabs(["⚙️ Gestionar Usuarios", "➕ Crear Nuevo Usuario", "🏢 Estructura Organizacional", "🔥 RESET SISTEMA"])
+    tab_list, tab_create, tab_teams, tab_reset, tab_import = st.tabs(["⚙️ Gestionar Usuarios", "➕ Crear Nuevo Usuario", "🏢 Estructura Organizacional", "🔥 RESET SISTEMA", "📥 Importar Usuarios"])
     
     # ------------------ SECCIÓN EQUIPOS POR AÑO ------------------
     with tab_teams:
@@ -1101,29 +1127,24 @@ def modulo_admin():
     # ------------------ SECCIÓN RESET SISTEMA ------------------
     with tab_reset:
         st.error("⚠️ ZONA DE PELIGRO EXTREMO: Aquí puedes borrar datos masivamente.")
+        st.markdown("Útil para limpiar datos de prueba antes de salir a producción.")
         c1, c2, c3, c4 = st.columns(4)
         del_leads = c1.checkbox("Borrar TODOS los Leads y Clientes")
         del_cots = c2.checkbox("Borrar TODAS las Cotizaciones y Ventas")
         del_teams = c3.checkbox("Borrar Estructura de Equipos")
         del_metas = c4.checkbox("Resetear Metas de Usuarios")
-        
         confirm_text = st.text_input("Escribe 'CONFIRMAR' para habilitar el borrado:")
-        
         if st.button("Ejecutar Limpieza", type="primary", disabled=(confirm_text != "CONFIRMAR")):
             success = True
-            
             if del_leads:
                 if github_push_json('url_leads', [], st.session_state.get('leads_sha')):
-                    st.session_state['leads_db'] = []
-                    st.success("Leads eliminados.")
+                    st.session_state['leads_db'] = []; st.success("Leads eliminados.")
                 else: success = False
-            
             if del_cots:
                 if github_push_json('url_cotizaciones', [], st.session_state.get('cotizaciones_sha')):
                     st.session_state['cotizaciones'] = pd.DataFrame(columns=st.session_state['cotizaciones'].columns)
                     st.success("Cotizaciones eliminadas.")
                 else: success = False
-            
             if del_teams or del_metas:
                 new_users = st.session_state['users_db'].copy()
                 if del_teams:
@@ -1137,21 +1158,49 @@ def modulo_admin():
                         if k.startswith("_"): continue
                         v['meta_rev'] = 0; v['metas_anuales'] = {}
                 if github_push_json('url_usuarios', new_users, st.session_state.get('users_sha')):
-                    sync_users_after_update()
-                    st.success("Configuraciones reseteadas.")
+                    sync_users_after_update(); st.success("Configuraciones reseteadas.")
                 else: success = False
-
-            if success:
-                st.balloons()
-                time.sleep(2)
-                st.rerun()
-            else:
-                st.error("Hubo un error al intentar borrar algunos datos.")
+            if success: st.balloons(); time.sleep(2); st.rerun()
+            else: st.error("Hubo un error al intentar borrar algunos datos.")
+            
+    # ------------------ SECCIÓN IMPORTAR ------------------
+    with tab_import:
+        st.subheader("Importar Usuarios y Estructura (CSV)")
+        st.info("Formato CSV requerido: email, nombre, rol, equipo, password_inicial")
+        
+        up_users = st.file_uploader("Cargar CSV de Usuarios", type=["csv"])
+        if up_users:
+            try:
+                df_u = pd.read_csv(up_users)
+                st.write("Vista Previa:", df_u.head())
+                if st.button("Procesar Usuarios"):
+                    cnt = 0
+                    for _, row in df_u.iterrows():
+                        em = row['email']
+                        if em not in users:
+                            hashed = bcrypt.hashpw(str(row['password_inicial']).encode(), bcrypt.gensalt()).decode()
+                            users[em] = {
+                                "name": row['nombre'],
+                                "role": row['rol'],
+                                "equipo": row.get('equipo', 'N/A'),
+                                "password_hash": hashed,
+                                "meta_rev": 0, "metas_anuales": {}
+                            }
+                            cnt += 1
+                    if cnt > 0:
+                        if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
+                            sync_users_after_update()
+                            st.success(f"{cnt} usuarios importados exitosamente.")
+                    else:
+                        st.warning("No se encontraron usuarios nuevos para importar.")
+            except Exception as e:
+                st.error(f"Error procesando CSV: {e}")
 
 # --- MENU LATERAL ---
 with st.sidebar:
     if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=130)
     role = st.session_state.get('current_role', 'Comercial')
+    # REORDERED MENU: Dashboard is now first
     opts = ["Dashboards", "Seguimiento", "Prospectos y Clientes", "Cotizador", "Finanzas"]; icos = ['bar-chart', 'check', 'person', 'file', 'currency-dollar']
     if role == "Super Admin": opts.append("Usuarios"); icos.append("people")
     menu = option_menu("Menú", opts, icons=icos, default_index=0)

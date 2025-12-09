@@ -752,48 +752,139 @@ def modulo_dashboard():
 
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Total Leads", len(df_leads_filtered))
-        c2.metric("Cant. Abiertas", cant_abiertas) 
-        c3.metric("Monto en Juego (Open)", f"${monto_abierto_usd:,.0f}")
+        c2.metric("Cotizaciones Abiertas", cant_abiertas) 
+        c3.metric("Pipeline (USD)", f"${monto_abierto_usd:,.0f}")
+        
         total_ops = len(df_cots_filtered); won_ops = len(df_cots_filtered[df_cots_filtered['estado'].isin(['Aprobada','Facturada'])])
         win_rate = (won_ops/total_ops*100) if total_ops > 0 else 0
         c4.metric("Tasa de Cierre", f"{win_rate:.1f}%")
-        facturado = df_cots_filtered[df_cots_filtered['estado']=='Facturada']['total'].sum() if not df_cots_filtered.empty else 0
-        c5.metric("Total Facturado", f"${facturado:,.0f}")
+        
+        df_fact = df_cots_filtered[df_cots_filtered['estado']=='Facturada'].copy()
+        if not df_fact.empty:
+             df_fact['Total_USD'] = df_fact.apply(convert_to_usd, axis=1)
+             facturado_usd = df_fact['Total_USD'].sum()
+        else: facturado_usd = 0
+        
+        c5.metric("Facturado (USD)", f"${facturado_usd:,.0f}")
+        
         st.divider()
         if not df_cots_filtered.empty:
             fig = px.pie(df_cots_filtered, names='estado', title="Distribución Estado Cotizaciones")
             st.plotly_chart(fig, use_container_width=True)
+
     with tab_kpi:
         st.subheader("Desempeño Individual vs Metas")
-        user_data = users.get(curr_email, {})
-        my_team = user_data.get('equipo', 'Sin Equipo')
-        df_my_sales = df_cots_filtered[(df_cots_filtered['vendedor'] == user_data.get('name','')) & (df_cots_filtered['estado'] == 'Facturada')]
-        def get_cat(m): return clasificar_cliente(m)
-        if not df_my_sales.empty:
-            df_my_sales['Categoria'] = df_my_sales['total'].apply(get_cat)
-            my_rev = df_my_sales['total'].sum(); cnt_big = len(df_my_sales[df_my_sales['Categoria']=='Grande'])
-            cnt_mid = len(df_my_sales[df_my_sales['Categoria']=='Mediano']); cnt_sml = len(df_my_sales[df_my_sales['Categoria']=='Chico'])
-        else: my_rev = 0; cnt_big=0; cnt_mid=0; cnt_sml=0
-        goal_rev = float(user_data.get('meta_rev', 0)); goal_big = int(user_data.get('meta_cli_big', 0)); goal_mid = int(user_data.get('meta_cli_mid', 0)); goal_sml = int(user_data.get('meta_cli_small', 0))
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown(f"#### 👤 Mis Resultados ({user_data.get('name','')})")
-            if goal_rev > 0: st.progress(min(my_rev/goal_rev, 1.0), text=f"Facturación: ${my_rev:,.0f} / ${goal_rev:,.0f} ({my_rev/goal_rev*100:.1f}%)")
-            else: st.info("Sin meta asignada.")
-            c_a, c_b, c_c = st.columns(3)
-            c_a.metric("Grandes", f"{cnt_big}/{goal_big}"); c_b.metric("Medianos", f"{cnt_mid}/{goal_mid}"); c_c.metric("Chicos", f"{cnt_sml}/{goal_sml}")
-        with c2:
-            st.markdown(f"#### 🏆 Resultados Equipo: {my_team}")
-            team_goal_rev = 0; team_members = []
-            for u, d in users.items():
-                if d.get('equipo') == my_team: team_goal_rev += float(d.get('meta_rev', 0)); team_members.append(d.get('name',''))
-            df_team_sales = df_cots_filtered[(df_cots_filtered['vendedor'].isin(team_members)) & (df_cots_filtered['estado'] == 'Facturada')]
-            team_rev = df_team_sales['total'].sum() if not df_team_sales.empty else 0
-            if team_goal_rev > 0:
-                st.progress(min(team_rev/team_goal_rev, 1.0), text=f"Meta Equipo: ${team_rev:,.0f} / ${team_goal_rev:,.0f} USD")
-                fig_team = go.Figure(go.Indicator(mode = "gauge+number+delta", value = team_rev, domain = {'x': [0, 1], 'y': [0, 1]}, title = {'text': "Avance Equipo"}, delta = {'reference': team_goal_rev}, gauge = {'axis': {'range': [None, team_goal_rev*1.2]}, 'bar': {'color': "#003366"}}))
-                st.plotly_chart(fig_team, use_container_width=True)
-            else: st.info("Sin metas de equipo.")
+        
+        # SI ES FINANZAS/ADMIN: VE A TODOS
+        if curr_role in ['Super Admin', 'Finanzas']:
+            st.info("Vista de Supervisor: Selecciona un comercial o ve la tabla resumen.")
+            
+            # Tabla Resumen Todos
+            summary_data = []
+            for u_email, u_data in users.items():
+                if u_data.get('role') == 'Comercial' or u_email == curr_email:
+                    # FETCH GOAL BY SELECTED YEARS
+                    user_metas = u_data.get('metas_anuales', {})
+                    goal_rev = sum(float(user_metas.get(str(y), {}).get('rev', 0)) for y in selected_years)
+                    # Fallback to legacy field if no annual meta
+                    if goal_rev == 0: goal_rev = float(u_data.get('meta_rev', 0))
+
+                    df_u_sales = df_cots_filtered[(df_cots_filtered['vendedor'] == u_data.get('name')) & (df_cots_filtered['estado'] == 'Facturada')].copy()
+                    
+                    real_rev_usd = 0
+                    if not df_u_sales.empty:
+                        df_u_sales['Total_USD'] = df_u_sales.apply(convert_to_usd, axis=1)
+                        real_rev_usd = df_u_sales['Total_USD'].sum()
+                    
+                    pct = (real_rev_usd / goal_rev * 100) if goal_rev > 0 else 0
+                    
+                    # Equipos string para display
+                    eq_list = get_user_teams_list(u_data)
+                    eq_str = ", ".join(eq_list)
+                    
+                    summary_data.append({
+                        "Nombre": u_data.get('name'),
+                        "Equipo": eq_str,
+                        "Meta (USD)": f"${goal_rev:,.0f}",
+                        "Venta (USD)": f"${real_rev_usd:,.0f}",
+                        "Cumplimiento": f"{pct:.1f}%"
+                    })
+            st.dataframe(pd.DataFrame(summary_data), use_container_width=True)
+            
+            # Drill Down
+            st.divider()
+            sel_rep = st.selectbox("Ver detalle de vendedor:", [d['name'] for e,d in users.items() if d.get('role') in ['Comercial', 'Super Admin', 'Finanzas']])
+            if sel_rep:
+                user_data = next((d for e,d in users.items() if d['name'] == sel_rep), {})
+                df_my_sales = df_cots_filtered[(df_cots_filtered['vendedor'] == sel_rep) & (df_cots_filtered['estado'] == 'Facturada')]
+        
+        # SI ES COMERCIAL O ADMIN CON META PERSONAL
+        else:
+            user_data = users.get(curr_email, {})
+            df_my_sales = df_cots_filtered[(df_cots_filtered['vendedor'] == user_data.get('name','')) & (df_cots_filtered['estado'] == 'Facturada')]
+
+        if user_data:
+            def get_cat(m): return clasificar_cliente(m)
+            if not df_my_sales.empty:
+                df_my_sales['Categoria'] = df_my_sales['total'].apply(get_cat)
+                df_my_sales['Total_USD'] = df_my_sales.apply(convert_to_usd, axis=1)
+                my_rev = df_my_sales['Total_USD'].sum()
+                cnt_big = len(df_my_sales[df_my_sales['Categoria']=='Grande'])
+                cnt_mid = len(df_my_sales[df_my_sales['Categoria']=='Mediano'])
+                cnt_sml = len(df_my_sales[df_my_sales['Categoria']=='Chico'])
+            else:
+                my_rev = 0; cnt_big=0; cnt_mid=0; cnt_sml=0
+
+            # Calculate Aggregate Goals based on selected years
+            u_metas = user_data.get('metas_anuales', {})
+            goal_rev = sum(float(u_metas.get(str(y), {}).get('rev', 0)) for y in selected_years)
+            goal_big = sum(int(u_metas.get(str(y), {}).get('big', 0)) for y in selected_years)
+            goal_mid = sum(int(u_metas.get(str(y), {}).get('mid', 0)) for y in selected_years)
+            goal_sml = sum(int(u_metas.get(str(y), {}).get('sml', 0)) for y in selected_years)
+            
+            # Fallback legacy
+            if goal_rev == 0:
+                goal_rev = float(user_data.get('meta_rev', 0))
+                goal_big = int(user_data.get('meta_cli_big', 0))
+                goal_mid = int(user_data.get('meta_cli_mid', 0))
+                goal_sml = int(user_data.get('meta_cli_small', 0))
+
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown(f"#### Resultados: {user_data.get('name','')}")
+                if goal_rev > 0: 
+                    st.progress(min(my_rev/goal_rev, 1.0), text=f"Facturación: ${my_rev:,.0f} / ${goal_rev:,.0f} USD ({my_rev/goal_rev*100:.1f}%)")
+                else: st.info("Sin meta asignada.")
+                c_a, c_b, c_c = st.columns(3)
+                c_a.metric("Grandes", f"{cnt_big}/{goal_big}"); c_b.metric("Medianos", f"{cnt_mid}/{goal_mid}"); c_c.metric("Chicos", f"{cnt_sml}/{goal_sml}")
+
+            with c2:
+                my_teams = get_user_teams_list(user_data)
+                
+                if my_teams:
+                    for team_name in my_teams:
+                        st.markdown(f"#### 🏆 Equipo: {team_name}")
+                        team_config_db = users.get('_CONFIG_ORG', {})
+                        team_goal_rev = 0
+                        if isinstance(team_config_db.get(team_name), dict):
+                            t_metas = team_config_db[team_name].get('metas_anuales', {})
+                            team_goal_rev = sum(float(t_metas.get(str(y), 0)) for y in selected_years)
+                            if team_goal_rev == 0: team_goal_rev = float(team_config_db[team_name].get('meta', 0))
+                        
+                        # Filtrar cotizaciones asignadas específicamente a este equipo
+                        df_team_sales = df_cots_filtered[(df_cots_filtered['equipo_asignado'] == team_name) & (df_cots_filtered['estado'] == 'Facturada')].copy()
+                        
+                        if not df_team_sales.empty:
+                            df_team_sales['Total_USD'] = df_team_sales.apply(convert_to_usd, axis=1)
+                            team_rev = df_team_sales['Total_USD'].sum()
+                        else: team_rev = 0
+                        
+                        if team_goal_rev > 0:
+                            st.progress(min(team_rev/team_goal_rev, 1.0), text=f"Meta: ${team_rev:,.0f} / ${team_goal_rev:,.0f} USD")
+                        else: st.info(f"Sin meta global definida.")
+                else:
+                    st.info("Usuario sin equipo asignado.")
+
     with tab_lead:
         if not df_leads_filtered.empty:
             c1, c2 = st.columns(2)
@@ -806,6 +897,7 @@ def modulo_dashboard():
                 fig_source = px.bar(df_leads_filtered, x='Origen', title="Fuentes", color='Origen')
                 st.plotly_chart(fig_source, use_container_width=True)
         else: st.info("No hay datos de leads.")
+
     with tab_sale:
         if not df_cots_filtered.empty:
             df_sales = df_cots_filtered[df_cots_filtered['estado'].isin(['Aprobada','Facturada'])]
@@ -815,12 +907,14 @@ def modulo_dashboard():
                 st.plotly_chart(fig_line, use_container_width=True)
             else: st.info("Aún no hay ventas cerradas.")
         else: st.info("Sin datos.")
+
     with tab_bill:
         df_inv = df_cots_filtered[df_cots_filtered['estado']=='Facturada']
         if not df_inv.empty:
             c1, c2, c3 = st.columns(3)
             tot_inv = df_inv['total'].sum()
             tot_paid = df_inv[df_inv['pago']=='Pagada']['total'].sum()
+            tot_pend = tot_inv - tot_paid
             c1.metric("Total Facturado", f"${tot_inv:,.0f}")
             c2.metric("Cobrado", f"${tot_paid:,.0f}")
             fig_pay = px.pie(df_inv, names='pago', title="Status de Cobranza", hole=0.4, color_discrete_map={'Pagada':'green', 'Pendiente':'orange', 'Vencida':'red'})
@@ -830,6 +924,7 @@ def modulo_dashboard():
 def modulo_admin():
     st.title("👥 Administración de Usuarios y Metas")
     users = st.session_state['users_db']
+    
     tab_list, tab_create, tab_teams, tab_reset, tab_import = st.tabs(["⚙️ Gestionar Usuarios", "➕ Crear Nuevo Usuario", "🏢 Estructura Organizacional", "🔥 RESET SISTEMA", "📥 Importar Usuarios"])
     
     # ------------------ SECCIÓN EQUIPOS POR AÑO ------------------
@@ -839,7 +934,8 @@ def modulo_admin():
         
         # Selector de Año para configurar
         current_year = datetime.now().year
-        sel_year_team = st.selectbox("Configurar Metas para el Año:", [current_year, current_year+1, current_year-1])
+        # CAMBIO SOLICITADO: Input numérico para el año, no selectbox limitado
+        sel_year_team = st.number_input("Configurar Metas para el Año:", min_value=2020, max_value=2050, value=current_year, step=1)
         
         # Crear Nuevo Equipo
         with st.expander("Crear Nuevo Equipo Principal"):
@@ -966,9 +1062,9 @@ def modulo_admin():
                 u = users[edit_user]
                 st.subheader(f"Editando: {u.get('name')}")
                 
-                # Selector de Año para editar metas
+                # Selector de Año para editar metas (CAMBIO A NUMBER_INPUT)
                 curr_year_admin = datetime.now().year
-                sel_year_meta = st.selectbox("Año de Metas:", [curr_year_admin, curr_year_admin+1, curr_year_admin-1], key="sy_meta")
+                sel_year_meta = st.number_input("Año de Metas:", min_value=2020, max_value=2050, value=curr_year_admin, step=1, key="sy_meta")
 
                 # Container de Edición Principal
                 with st.container(border=True):

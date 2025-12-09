@@ -133,23 +133,34 @@ def login_page():
         st.markdown("<br><br>", unsafe_allow_html=True)
         if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=300)
         st.markdown("### Acceso Seguro ERP")
+        
         with st.form("login_form"):
             u = st.text_input("Usuario", key="login_user")
             p = st.text_input("Contraseña", type="password", key="login_pass")
             submit = st.form_submit_button("Entrar", use_container_width=True)
+            
             if submit:
-                user = st.session_state['users_db'].get(u)
-                if user:
-                    try:
-                        stored_hash = user.get('password_hash', '')
-                        if bcrypt.checkpw(p.encode(), stored_hash.encode()):
-                            st.session_state['auth_status'] = True
-                            st.session_state['current_user'] = u
-                            st.session_state['current_role'] = user.get('role', 'Comercial')
-                            st.success("Acceso Correcto"); time.sleep(0.2); st.rerun()
-                        else: st.error("⚠️ Contraseña incorrecta")
-                    except Exception as e: st.error(f"Error de validación: {e}")
-                else: st.error("⚠️ Usuario no encontrado")
+                # Validamos que no sea la clave de configuración de equipos
+                if u == "_TEAM_CONFIG":
+                    st.error("Usuario no válido")
+                else:
+                    user = st.session_state['users_db'].get(u)
+                    if user and 'password_hash' in user:
+                        try:
+                            stored_hash = user.get('password_hash', '')
+                            if bcrypt.checkpw(p.encode(), stored_hash.encode()):
+                                st.session_state['auth_status'] = True
+                                st.session_state['current_user'] = u
+                                st.session_state['current_role'] = user.get('role', 'Comercial')
+                                st.success("Acceso Correcto")
+                                time.sleep(0.2)
+                                st.rerun()
+                            else:
+                                st.error("⚠️ Contraseña incorrecta")
+                        except Exception as e:
+                            st.error(f"Error de validación")
+                    else:
+                        st.error("⚠️ Usuario no encontrado")
 
 def logout(): st.session_state.clear(); st.rerun()
 
@@ -675,7 +686,6 @@ def modulo_dashboard():
     tab_gen, tab_kpi, tab_lead, tab_sale, tab_bill = st.tabs(["📊 General", "🎯 Metas y Desempeño", "📇 Leads (Funnel)", "📈 Cierre Ventas", "💵 Facturación"])
     
     with tab_gen:
-        # Calcular Total Cotizado Abierto (USD) para KPI Global
         df_open = df_cots_filtered[df_cots_filtered['estado'].isin(['Enviada', 'Aprobada'])].copy()
         cant_abiertas = len(df_open)
         monto_abierto_usd = 0
@@ -686,13 +696,12 @@ def modulo_dashboard():
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Total Leads", len(df_leads_filtered))
         c2.metric("Cant. Abiertas", cant_abiertas) 
-        c3.metric("Pipeline (USD)", f"${monto_abierto_usd:,.0f}")
+        c3.metric("Monto en Juego (Open)", f"${monto_abierto_usd:,.0f}")
         
         total_ops = len(df_cots_filtered); won_ops = len(df_cots_filtered[df_cots_filtered['estado'].isin(['Aprobada','Facturada'])])
         win_rate = (won_ops/total_ops*100) if total_ops > 0 else 0
         c4.metric("Tasa de Cierre", f"{win_rate:.1f}%")
         
-        # Facturado en USD
         df_fact = df_cots_filtered[df_cots_filtered['estado']=='Facturada'].copy()
         if not df_fact.empty:
              df_fact['Total_USD'] = df_fact.apply(convert_to_usd, axis=1)
@@ -709,55 +718,35 @@ def modulo_dashboard():
     with tab_kpi:
         st.subheader("Desempeño Individual vs Metas")
         
-        # SI ES FINANZAS/ADMIN: VE A TODOS
         if curr_role in ['Super Admin', 'Finanzas']:
             st.info("Vista de Supervisor: Selecciona un comercial o ve la tabla resumen.")
-            
-            # Tabla Resumen Todos
             summary_data = []
             for u_email, u_data in users.items():
-                if u_data.get('role') == 'Comercial':
+                if u_data.get('role') == 'Comercial' or u_email == curr_email:
                     goal_rev = float(u_data.get('meta_rev', 0))
-                    # Ventas de este usuario (en las fechas filtradas)
                     df_u_sales = df_cots_filtered[(df_cots_filtered['vendedor'] == u_data.get('name')) & (df_cots_filtered['estado'] == 'Facturada')].copy()
-                    
                     real_rev_usd = 0
                     if not df_u_sales.empty:
                         df_u_sales['Total_USD'] = df_u_sales.apply(convert_to_usd, axis=1)
                         real_rev_usd = df_u_sales['Total_USD'].sum()
-                    
                     pct = (real_rev_usd / goal_rev * 100) if goal_rev > 0 else 0
-                    summary_data.append({
-                        "Nombre": u_data.get('name'),
-                        "Equipo": u_data.get('equipo'),
-                        "Meta (USD)": f"${goal_rev:,.0f}",
-                        "Venta (USD)": f"${real_rev_usd:,.0f}",
-                        "Cumplimiento": f"{pct:.1f}%"
-                    })
+                    summary_data.append({"Nombre": u_data.get('name'), "Equipo": u_data.get('equipo'), "Meta (USD)": f"${goal_rev:,.0f}", "Venta (USD)": f"${real_rev_usd:,.0f}", "Cumplimiento": f"{pct:.1f}%"})
             st.dataframe(pd.DataFrame(summary_data), use_container_width=True)
-            
-            # Drill Down
             st.divider()
-            sel_rep = st.selectbox("Ver detalle de vendedor:", [d['name'] for e,d in users.items() if d.get('role')=='Comercial'])
+            sel_rep = st.selectbox("Ver detalle de vendedor:", [d['name'] for e,d in users.items() if d.get('role') in ['Comercial', 'Super Admin', 'Finanzas']])
             if sel_rep:
-                # Mock user data for the visualizer below
                 user_data = next((d for e,d in users.items() if d['name'] == sel_rep), {})
                 df_my_sales = df_cots_filtered[(df_cots_filtered['vendedor'] == sel_rep) & (df_cots_filtered['estado'] == 'Facturada')]
-        
-        # SI ES COMERCIAL: SE VE A SI MISMO
         else:
             user_data = users.get(curr_email, {})
             df_my_sales = df_cots_filtered[(df_cots_filtered['vendedor'] == user_data.get('name','')) & (df_cots_filtered['estado'] == 'Facturada')]
 
-        # RENDERIZAR GRAFICOS INDIVIDUALES (Ya sea propio o drill-down de admin)
         if user_data:
             def get_cat(m): return clasificar_cliente(m)
             if not df_my_sales.empty:
                 df_my_sales['Categoria'] = df_my_sales['total'].apply(get_cat)
-                # Calculo de venta total (Aquí sí convertimos a USD para comparar con meta si la meta es USD, asumiremos meta en USD)
                 df_my_sales['Total_USD'] = df_my_sales.apply(convert_to_usd, axis=1)
                 my_rev = df_my_sales['Total_USD'].sum()
-                
                 cnt_big = len(df_my_sales[df_my_sales['Categoria']=='Grande'])
                 cnt_mid = len(df_my_sales[df_my_sales['Categoria']=='Mediano'])
                 cnt_sml = len(df_my_sales[df_my_sales['Categoria']=='Chico'])
@@ -765,30 +754,27 @@ def modulo_dashboard():
                 my_rev = 0; cnt_big=0; cnt_mid=0; cnt_sml=0
 
             goal_rev = float(user_data.get('meta_rev', 0))
-            goal_big = int(user_data.get('meta_cli_big', 0))
-            goal_mid = int(user_data.get('meta_cli_mid', 0))
-            goal_sml = int(user_data.get('meta_cli_small', 0))
+            goal_big = int(user_data.get('meta_cli_big', 0)); goal_mid = int(user_data.get('meta_cli_mid', 0)); goal_sml = int(user_data.get('meta_cli_small', 0))
 
             c1, c2 = st.columns(2)
             with c1:
                 st.markdown(f"#### Resultados: {user_data.get('name','')}")
-                if goal_rev > 0: 
-                    st.progress(min(my_rev/goal_rev, 1.0), text=f"Facturación: ${my_rev:,.0f} / ${goal_rev:,.0f} USD ({my_rev/goal_rev*100:.1f}%)")
+                if goal_rev > 0: st.progress(min(my_rev/goal_rev, 1.0), text=f"Facturación: ${my_rev:,.0f} / ${goal_rev:,.0f} USD ({my_rev/goal_rev*100:.1f}%)")
                 else: st.info("Sin meta asignada.")
-                
                 c_a, c_b, c_c = st.columns(3)
                 c_a.metric("Grandes", f"{cnt_big}/{goal_big}"); c_b.metric("Medianos", f"{cnt_mid}/{goal_mid}"); c_c.metric("Chicos", f"{cnt_sml}/{goal_sml}")
 
             with c2:
                 my_team = user_data.get('equipo', 'Sin Equipo')
                 st.markdown(f"#### 🏆 Equipo: {my_team}")
-                team_goal_rev = 0; team_members = []
-                for u, d in users.items():
-                    if d.get('equipo') == my_team: 
-                        team_goal_rev += float(d.get('meta_rev', 0))
-                        team_members.append(d.get('name',''))
+                # GET TEAM GOAL FROM HIDDEN CONFIG
+                team_config = users.get('_TEAM_CONFIG', {})
+                team_goal_rev = float(team_config.get(my_team, 0))
                 
-                # Ventas equipo en USD
+                # GET TEAM MEMBERS
+                team_members = [d['name'] for e,d in users.items() if d.get('equipo') == my_team]
+                
+                # GET TEAM SALES
                 df_team_sales = df_cots_filtered[(df_cots_filtered['vendedor'].isin(team_members)) & (df_cots_filtered['estado'] == 'Facturada')].copy()
                 if not df_team_sales.empty:
                     df_team_sales['Total_USD'] = df_team_sales.apply(convert_to_usd, axis=1)
@@ -799,7 +785,7 @@ def modulo_dashboard():
                     st.progress(min(team_rev/team_goal_rev, 1.0), text=f"Meta Equipo: ${team_rev:,.0f} / ${team_goal_rev:,.0f} USD")
                     fig_team = go.Figure(go.Indicator(mode = "gauge+number+delta", value = team_rev, domain = {'x': [0, 1], 'y': [0, 1]}, title = {'text': "Avance Equipo"}, delta = {'reference': team_goal_rev}, gauge = {'axis': {'range': [None, team_goal_rev*1.2]}, 'bar': {'color': "#003366"}}))
                     st.plotly_chart(fig_team, use_container_width=True)
-                else: st.info("Sin metas de equipo.")
+                else: st.info(f"Sin meta global definida para {my_team}.")
 
     with tab_lead:
         if not df_leads_filtered.empty:
@@ -830,6 +816,7 @@ def modulo_dashboard():
             c1, c2, c3 = st.columns(3)
             tot_inv = df_inv['total'].sum()
             tot_paid = df_inv[df_inv['pago']=='Pagada']['total'].sum()
+            tot_pend = tot_inv - tot_paid
             c1.metric("Total Facturado", f"${tot_inv:,.0f}")
             c2.metric("Cobrado", f"${tot_paid:,.0f}")
             fig_pay = px.pie(df_inv, names='pago', title="Status de Cobranza", hole=0.4, color_discrete_map={'Pagada':'green', 'Pendiente':'orange', 'Vencida':'red'})
@@ -839,7 +826,23 @@ def modulo_dashboard():
 def modulo_admin():
     st.title("👥 Administración de Usuarios y Metas")
     users = st.session_state['users_db']
-    tab_list, tab_create = st.tabs(["⚙️ Gestionar Usuarios", "➕ Crear Nuevo Usuario"])
+    
+    tab_list, tab_create, tab_teams = st.tabs(["⚙️ Gestionar Usuarios", "➕ Crear Nuevo Usuario", "🏢 Metas de Equipo"])
+    
+    with tab_teams:
+        st.subheader("Configuración Global de Metas por Equipo (USD)")
+        # Cargar configuración existente oculta
+        team_config = users.get('_TEAM_CONFIG', {'Cono Sur': 0, 'Internacional': 0})
+        
+        c1, c2 = st.columns(2)
+        m_cs = c1.number_input("Meta Global Cono Sur", value=float(team_config.get('Cono Sur', 0)))
+        m_int = c2.number_input("Meta Global Internacional", value=float(team_config.get('Internacional', 0)))
+        
+        if st.button("Guardar Metas de Equipo"):
+            users['_TEAM_CONFIG'] = {'Cono Sur': m_cs, 'Internacional': m_int}
+            if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
+                sync_users_after_update(); st.success("Metas de equipo actualizadas"); time.sleep(1); st.rerun()
+
     with tab_create:
         st.subheader("Alta de Nuevo Usuario")
         with st.form("new_user_form"):
@@ -848,6 +851,7 @@ def modulo_admin():
             new_role = st.selectbox("Rol", ["Comercial", "Finanzas", "Super Admin"])
             new_team = st.selectbox("Equipo (Solo Comerciales)", ["Cono Sur", "Internacional", "N/A"])
             new_pass = st.text_input("Contraseña Inicial", type="password")
+            
             if st.form_submit_button("Crear Usuario"):
                 if not new_email or not new_pass: st.error("Correo y contraseña obligatorios")
                 elif new_email in users: st.error("Usuario ya existe")
@@ -857,30 +861,39 @@ def modulo_admin():
                     if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
                         sync_users_after_update(); st.success(f"Usuario {new_email} creado"); time.sleep(1); st.rerun()
                     else: st.error("Error al guardar")
+
     with tab_list:
         st.subheader("Usuarios Registrados")
         clean_users = []
         for u_email, u_data in users.items():
+            if u_email == '_TEAM_CONFIG': continue
             clean_users.append({"Email": u_email, "Nombre": u_data.get('name', ''), "Rol": u_data.get('role', ''), "Equipo": u_data.get('equipo', '-'), "Meta $": f"${u_data.get('meta_rev', 0):,.0f}"})
         st.dataframe(pd.DataFrame(clean_users), use_container_width=True)
+        
         st.markdown("---"); st.subheader("✏️ Editar Perfil y Metas")
-        edit_user = st.selectbox("Seleccionar Usuario", list(users.keys()))
+        # Filtrar clave oculta
+        user_keys = [k for k in users.keys() if k != '_TEAM_CONFIG']
+        edit_user = st.selectbox("Seleccionar Usuario", user_keys)
+        
         if edit_user:
             u = users[edit_user]
             with st.expander(f"Configuración: {u.get('name')}", expanded=True):
                 c1, c2 = st.columns(2)
                 new_role_e = c1.selectbox("Rol", ["Comercial", "Finanzas", "Super Admin"], index=["Comercial", "Finanzas", "Super Admin"].index(u.get('role', 'Comercial')))
                 new_team_e = c2.selectbox("Equipo", ["Cono Sur", "Internacional", "N/A"], index=["Cono Sur", "Internacional", "N/A"].index(u.get('equipo', 'N/A')))
+                
                 st.markdown("#### 🎯 Metas Anuales (Solo Comercial)")
                 col_m1, col_m2, col_m3, col_m4 = st.columns(4)
                 m_rev = col_m1.number_input("Meta Facturación ($)", value=float(u.get('meta_rev', 0)))
                 m_big = col_m2.number_input("Meta Clientes Grandes (>20k)", value=int(u.get('meta_cli_big', 0)))
                 m_mid = col_m3.number_input("Meta Clientes Medianos (10-20k)", value=int(u.get('meta_cli_mid', 0)))
                 m_sml = col_m4.number_input("Meta Clientes Chicos (5-10k)", value=int(u.get('meta_cli_small', 0)))
+
                 if st.button("💾 Guardar Cambios"):
                     users[edit_user].update({'role': new_role_e, 'equipo': new_team_e, 'meta_rev': m_rev, 'meta_cli_big': m_big, 'meta_cli_mid': m_mid, 'meta_cli_small': m_sml})
                     if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
                         sync_users_after_update(); st.success("Perfil actualizado"); time.sleep(1); st.rerun()
+                
                 st.divider(); st.warning("⚠️ Zona Seguridad")
                 pass_rst = st.text_input("Nueva Contraseña (Admin)", type="password")
                 if st.button("Reestablecer Clave"):
@@ -888,6 +901,7 @@ def modulo_admin():
                         users[edit_user]['password_hash'] = bcrypt.hashpw(pass_rst.encode(), bcrypt.gensalt()).decode()
                         if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
                             sync_users_after_update(); st.success("Clave cambiada")
+                
                 st.markdown("### 🚨 Zona de Peligro")
                 if edit_user == st.session_state['current_user']: st.error("No puedes eliminar tu propio usuario mientras estás logueado.")
                 else:

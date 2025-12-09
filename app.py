@@ -133,12 +133,10 @@ def login_page():
         st.markdown("<br><br>", unsafe_allow_html=True)
         if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=300)
         st.markdown("### Acceso Seguro ERP")
-        
         with st.form("login_form"):
             u = st.text_input("Usuario", key="login_user")
             p = st.text_input("Contraseña", type="password", key="login_pass")
             submit = st.form_submit_button("Entrar", use_container_width=True)
-            
             if submit:
                 user = st.session_state['users_db'].get(u)
                 if user:
@@ -148,23 +146,14 @@ def login_page():
                             st.session_state['auth_status'] = True
                             st.session_state['current_user'] = u
                             st.session_state['current_role'] = user.get('role', 'Comercial')
-                            st.success("Acceso Correcto")
-                            time.sleep(0.2)
-                            st.rerun()
-                        else:
-                            st.error("⚠️ Contraseña incorrecta")
-                    except Exception as e:
-                        st.error(f"Error de validación: {e}")
-                else:
-                    st.error("⚠️ Usuario no encontrado")
+                            st.success("Acceso Correcto"); time.sleep(0.2); st.rerun()
+                        else: st.error("⚠️ Contraseña incorrecta")
+                    except Exception as e: st.error(f"Error de validación: {e}")
+                else: st.error("⚠️ Usuario no encontrado")
 
-def logout(): 
-    st.session_state.clear()
-    st.rerun()
+def logout(): st.session_state.clear(); st.rerun()
 
-if not st.session_state['auth_status']: 
-    login_page()
-    st.stop()
+if not st.session_state['auth_status']: login_page(); st.stop()
 
 @st.cache_data(ttl=60)
 def cargar_precios():
@@ -185,7 +174,6 @@ TODOS_LOS_PAISES = sorted(df_config['Pais'].unique().tolist()) if not df_config.
 
 @st.cache_data(ttl=3600)
 def obtener_indicadores():
-    # MODIFICADO: Valor por defecto 0
     t = {"UF": 0, "USD_CLP": 0, "USD_BRL": 0}
     try: 
         resp = requests.get('https://mindicador.cl/api',timeout=2).json()
@@ -247,7 +235,6 @@ def obtener_contexto(pais):
 def calc_paa(c, m):
     b = 1500 if c<=2 else 1200 if c<=5 else 1100
     if m == "US$": return b
-    # Check division by zero
     if m == "UF": return (b*TASAS['USD_CLP'])/TASAS['UF'] if TASAS['UF'] > 0 else 0
     return b*TASAS['USD_BRL']
 
@@ -332,7 +319,7 @@ def generar_pdf_final(emp, cli, items, calc, idioma_code, extras):
     return pdf.output(dest='S').encode('latin-1')
 
 # ==============================================================================
-# 5. MÓDULOS APP
+# 7. MÓDULOS APP
 # ==============================================================================
 def modulo_crm():
     st.title("📇 Prospectos y Clientes")
@@ -407,12 +394,10 @@ def modulo_crm():
 def modulo_cotizador():
     cl, ct = st.columns([1, 5]); idi = cl.selectbox("🌐", ["ES", "PT", "EN"]); txt = TEXTOS[idi]; ct.title(txt['title'])
     c1,c2,c3,c4 = st.columns(4)
-    # Tasas con aviso si están en 0
     v_uf = TASAS['UF']; v_usd = TASAS['USD_CLP']; v_brl = TASAS['USD_BRL']
     c1.metric("UF", f"${v_uf:,.0f}"); c2.metric("USD", f"${v_usd:,.0f}"); c3.metric("BRL", f"{v_brl:.2f}")
     if c4.button("Actualizar Tasas"): obtener_indicadores.clear(); st.rerun()
-    if v_uf == 0 or v_usd == 0:
-        st.error("⚠️ Error cargando indicadores económicos. Los cálculos podrían ser incorrectos. Intenta 'Actualizar Tasas'.")
+    if v_uf == 0 or v_usd == 0: st.error("⚠️ Error cargando indicadores. Intenta 'Actualizar Tasas'.")
 
     st.markdown("---"); c1, c2 = st.columns([1, 2])
     idx = TODOS_LOS_PAISES.index("Chile") if "Chile" in TODOS_LOS_PAISES else 0
@@ -498,20 +483,16 @@ def modulo_seguimiento():
     df = df.sort_values('fecha', ascending=False)
     curr_user = st.session_state['current_user']
     curr_role = st.session_state.get('current_role', 'Comercial')
-    
     if curr_role == 'Comercial':
         my_team = st.session_state['users_db'][curr_user].get('equipo', 'N/A')
         team_names = [u['name'] for k, u in st.session_state['users_db'].items() if u.get('equipo') == my_team]
         df = df[df['vendedor'].isin(team_names)]
-    
     c1, c2 = st.columns([3, 1])
     with c1: st.info("ℹ️ Gestión: Cambia estado a 'Aprobada' para que Finanzas facture.")
     with c2: ver_historial = st.checkbox("📂 Ver Historial Completo", value=False)
-    
     if not ver_historial:
         df = df[df['estado'].isin(['Enviada', 'Aprobada'])]
         if df.empty: st.warning("No tienes cotizaciones abiertas.")
-
     for i, r in df.iterrows():
         lang_tag = f"[{r.get('idioma','ES')}]"
         label = f"{lang_tag} {r['fecha']} | {r['id']} | {r['empresa']} | {r['moneda']} {r['total']:,.0f}"
@@ -630,7 +611,6 @@ def modulo_finanzas():
                         if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
                             st.success("Factura eliminada."); time.sleep(1); st.rerun()
 
-# --- FUNCION PARA CONVERTIR A USD (GLOBAL DASHBOARD) ---
 def convert_to_usd(row):
     m = row['moneda']; v = row['total']
     if m == 'US$': return v
@@ -772,7 +752,6 @@ def modulo_dashboard():
         # RENDERIZAR GRAFICOS INDIVIDUALES (Ya sea propio o drill-down de admin)
         if user_data:
             def get_cat(m): return clasificar_cliente(m)
-            # NOTA: Para clasificación de tamaño usamos el valor nominal por simplicidad, o idealmente convertir a USD. Usaremos nominal.
             if not df_my_sales.empty:
                 df_my_sales['Categoria'] = df_my_sales['total'].apply(get_cat)
                 # Calculo de venta total (Aquí sí convertimos a USD para comparar con meta si la meta es USD, asumiremos meta en USD)

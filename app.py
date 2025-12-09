@@ -33,6 +33,8 @@ st.markdown("""
     .stMetric {background-color: #ffffff; border: 1px solid #e6e6e6; padding: 15px; border-radius: 8px; box-shadow: 2px 2px 5px rgba(0,0,0,0.05);}
     div.stButton > button:first-child { background-color: #003366; color: white; border-radius: 8px; font-weight: bold;}
     [data-testid="stSidebar"] { padding-top: 0rem; }
+    /* Estilo para tarjetas de admin */
+    .admin-card { padding: 20px; background-color: #f0f2f6; border-radius: 10px; margin-bottom: 20px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -88,7 +90,6 @@ if 'users_db' not in st.session_state:
         hashed = bcrypt.hashpw(st.secrets['auth']['admin_pass'].encode(), bcrypt.gensalt()).decode()
         users = {admin_email: {"name": "Super Admin", "role": "Super Admin", "password_hash": hashed}}
     
-    # Inicialización LIMPIA de estructura organizacional
     if '_CONFIG_ORG' not in users:
         users['_CONFIG_ORG'] = {} 
         
@@ -528,11 +529,9 @@ def modulo_seguimiento():
     c1, c2 = st.columns([3, 1])
     with c1: st.info("ℹ️ Gestión: Cambia estado a 'Aprobada' para que Finanzas facture.")
     with c2: ver_historial = st.checkbox("📂 Ver Historial Completo", value=False)
-    
     if not ver_historial:
         df = df[df['estado'].isin(['Enviada', 'Aprobada'])]
         if df.empty: st.warning("No tienes cotizaciones abiertas.")
-
     for i, r in df.iterrows():
         lang_tag = f"[{r.get('idioma','ES')}]"
         team_tag = f"({r.get('equipo_asignado', 'N/A')})"
@@ -540,7 +539,6 @@ def modulo_seguimiento():
         if r['estado'] == 'Facturada': label += " ✅ (Facturada)"
         elif r['estado'] == 'Aprobada': label += " 🎉 (Cerrada)"
         elif r['estado'] == 'Enviada': label += " ⏳ (En Negociación)"
-        
         with st.expander(label):
             col_status, col_req = st.columns(2)
             with col_status:
@@ -549,104 +547,82 @@ def modulo_seguimiento():
                 disabled_st = r['estado'] == 'Facturada'
                 current_st = r['estado'] if r['estado'] in est_options else est_options[0]
                 if r['estado'] == 'Facturada': current_st = "Aprobada"
-                
                 new_status = st.selectbox("Estado", est_options, key=f"st_{r['id']}", index=est_options.index(current_st), disabled=disabled_st)
-            
             with col_req:
                 st.caption("Requisitos")
                 hes_check = st.checkbox("Requiere HES", value=r.get('hes', False), key=f"hs_{r['id']}", disabled=disabled_st)
-                if hes_check: st.warning("⚠️ Finanzas sabrá que debe pedir HES antes de facturar.")
-
-            if not disabled_st and st.button("Actualizar Venta", key=f"btn_{r['id']}"):
+                if hes_check: st.warning("⚠️ Requiere HES para facturar.")
+            if not disabled_st and st.button("Actualizar", key=f"btn_{r['id']}"):
                 st.session_state['cotizaciones'].at[i, 'estado'] = new_status
                 st.session_state['cotizaciones'].at[i, 'hes'] = hes_check
                 if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
-                    st.success("Estado actualizado"); time.sleep(1); st.rerun()
+                    st.success("Actualizado"); time.sleep(1); st.rerun()
 
 def modulo_finanzas():
     st.title("💰 Gestión Financiera")
     df = st.session_state['cotizaciones']
     if df.empty: st.info("No hay datos."); return
-    
     tab_billing, tab_collection = st.tabs(["📝 Por Facturar (Backlog)", "💵 Historial Facturadas"])
-    
     with tab_billing:
         st.subheader("Pendientes de Facturación")
         to_bill = df[df['estado'] == 'Aprobada']
-        
-        if to_bill.empty: 
-            st.success("¡Excelente! No hay cotizaciones pendientes de facturar.")
+        if to_bill.empty: st.success("¡Excelente! No hay pendientes.")
         else:
             for i, r in to_bill.iterrows():
                 with st.container():
                     lang_tag = f"[{r.get('idioma','ES')}]"
                     st.markdown(f"**{lang_tag} {r['empresa']}** | ID: {r['id']} | Total: {r['moneda']} {r['total']:,.0f}")
-                    if r.get('hes'): st.error("🚨 REQUISITO: Esta venta requiere N° HES o MIGO para facturar.")
-                    
+                    if r.get('hes'): st.error("🚨 REQUISITO: Esta venta requiere N° HES o MIGO.")
                     if r.get('items') and isinstance(r['items'], list):
                         cli = {'empresa':r['empresa'], 'contacto':'', 'email':''} 
                         ext = r.get('pdf_data', {'id':r['id'], 'pais':r['pais'], 'bank':0, 'desc':0})
                         prod_items = [x for x in r['items'] if x['Ítem']=='Evaluación']
                         serv_items = [x for x in r['items'] if x['Ítem']=='Servicio']
-                        
+                        idi_saved = r.get('idioma', 'ES')
                         pdf_links = ""
                         if r['pais'] == "Chile" and prod_items and serv_items:
                              sub_p = sum(x['Total'] for x in prod_items); tax_p = sub_p*0.19; tot_p = sub_p*1.19
                              calc_p = {'subtotal':sub_p, 'fee':0, 'tax_name':"IVA", 'tax_val':tax_p, 'total':tot_p}
-                             pdf_p = generar_pdf_final(EMPRESAS['Chile_Pruebas'], cli, prod_items, calc_p, "COTIZACIÓN", ext)
+                             pdf_p = generar_pdf_final(EMPRESAS['Chile_Pruebas'], cli, prod_items, calc_p, idi_saved, ext)
                              b64_p = base64.b64encode(pdf_p).decode('latin-1')
-                             
                              sub_s = sum(x['Total'] for x in serv_items); tot_s = sub_s
                              calc_s = {'subtotal':sub_s, 'fee':0, 'tax_name':"", 'tax_val':0, 'total':tot_s}
-                             pdf_s = generar_pdf_final(EMPRESAS['Chile_Servicios'], cli, serv_items, calc_s, "COTIZACIÓN", ext)
+                             pdf_s = generar_pdf_final(EMPRESAS['Chile_Servicios'], cli, serv_items, calc_s, idi_saved, ext)
                              b64_s = base64.b64encode(pdf_s).decode('latin-1')
-                             pdf_links = f'<a href="data:application/pdf;base64,{b64_p}" download="Cot_{r["id"]}_P.pdf">📄 Ver PDF SpA</a> | <a href="data:application/pdf;base64,{b64_s}" download="Cot_{r["id"]}_S.pdf">📄 Ver PDF Ltda</a>'
+                             pdf_links = f'<a href="data:application/pdf;base64,{b64_p}" download="Cot_{r["id"]}_P.pdf">📄 Ver PDF SpA ({idi_saved})</a> | <a href="data:application/pdf;base64,{b64_s}" download="Cot_{r["id"]}_S.pdf">📄 Ver PDF Ltda ({idi_saved})</a>'
                         else:
-                             ent = get_empresa(r['pais'], r['items'])
-                             sub = sum(x['Total'] for x in r['items'])
-                             tn, tv = get_impuestos(r['pais'], sub, sub)
-                             calc = {'subtotal':sub, 'fee':0, 'tax_name':tn, 'tax_val':tv, 'total':r['total']}
-                             pdf = generar_pdf_final(ent, cli, r['items'], calc, "COTIZACIÓN", ext)
+                             ent = get_empresa(r['pais'], r['items']); sub = sum(x['Total'] for x in r['items']); tn, tv = get_impuestos(r['pais'], sub, sub); calc = {'subtotal':sub, 'fee':0, 'tax_name':tn, 'tax_val':tv, 'total':r['total']}
+                             pdf = generar_pdf_final(ent, cli, r['items'], calc, idi_saved, ext)
                              b64 = base64.b64encode(pdf).decode('latin-1')
-                             pdf_links = f'<a href="data:application/pdf;base64,{b64}" download="Cot_{r["id"]}.pdf">📄 Ver PDF Cotización</a>'
+                             pdf_links = f'<a href="data:application/pdf;base64,{b64}" download="Cot_{r["id"]}.pdf">📄 Ver PDF Cotización ({idi_saved})</a>'
                         st.markdown(pdf_links, unsafe_allow_html=True)
-                    else:
-                        st.warning("⚠️ Vista de PDF no disponible (cotización antigua sin detalle).")
-
+                    else: st.warning("⚠️ PDF no disponible.")
                     c1, c2, c3, c4 = st.columns(4)
-                    new_oc = c1.text_input("Orden de Compra (OC)", value=r.get('oc',''), key=f"oc_{r['id']}")
-                    new_hes_num = c2.text_input("N° HES / MIGO", value=r.get('hes_num',''), key=f"hnum_{r['id']}")
+                    new_oc = c1.text_input("OC", value=r.get('oc',''), key=f"oc_{r['id']}")
+                    new_hes_num = c2.text_input("N° HES", value=r.get('hes_num',''), key=f"hnum_{r['id']}")
                     new_inv = c3.text_input("N° Factura", key=f"inv_{r['id']}")
-                    
-                    if c4.button("Emitir Factura", key=f"bill_{r['id']}"):
+                    if c4.button("Emitir", key=f"bill_{r['id']}"):
                         if not new_inv: st.error("Falta N° Factura"); continue
                         st.session_state['cotizaciones'].at[i, 'oc'] = new_oc
                         st.session_state['cotizaciones'].at[i, 'hes_num'] = new_hes_num
                         st.session_state['cotizaciones'].at[i, 'factura'] = new_inv
                         st.session_state['cotizaciones'].at[i, 'estado'] = 'Facturada'
                         if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
-                            st.success(f"Factura {new_inv} guardada! Movida al historial."); time.sleep(1); st.rerun()
+                            st.success(f"Factura {new_inv} guardada!"); time.sleep(1); st.rerun()
                     st.divider()
-
     with tab_collection:
         st.subheader("Historial y Cobranza")
         billed = df[df['estado'] == 'Facturada'].copy()
-        if billed.empty:
-            st.info("No hay historial de facturación.")
+        if billed.empty: st.info("No hay historial.")
         else:
             st.dataframe(billed[['fecha', 'id', 'empresa', 'total', 'moneda', 'oc', 'hes_num', 'factura', 'pago']], use_container_width=True)
-            st.markdown("---")
-            st.subheader("🔧 Gestión de Factura (Edición/Anulación)")
-            
+            st.markdown("---"); st.subheader("🔧 Gestión de Factura")
             inv_list = billed['factura'].unique().tolist()
             sel_inv = st.selectbox("Seleccionar N° Factura", inv_list)
-            
             if sel_inv:
                 row_idx = df[df['factura'] == sel_inv].index[0]
                 r_sel = st.session_state['cotizaciones'].iloc[row_idx]
-                
                 t1, t2, t3 = st.tabs(["💰 Actualizar Pago", "✏️ Corregir Datos", "🚫 Anular Factura"])
-                
                 with t1:
                     curr_pay = r_sel['pago']
                     c1, c2 = st.columns([2,1])
@@ -655,20 +631,17 @@ def modulo_finanzas():
                         st.session_state['cotizaciones'].at[row_idx, 'pago'] = new_p
                         github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha'))
                         st.success("Pago actualizado"); time.sleep(0.5); st.rerun()
-
                 with t2:
                     st.info("Edita datos si hubo un error de tipeo.")
                     e_oc = st.text_input("Corregir OC", value=r_sel['oc'])
                     e_hes = st.text_input("Corregir HES", value=r_sel['hes_num'])
                     e_inv = st.text_input("Corregir N° Factura", value=r_sel['factura'])
-                    
                     if st.button("Guardar Correcciones"):
                         st.session_state['cotizaciones'].at[row_idx, 'oc'] = e_oc
                         st.session_state['cotizaciones'].at[row_idx, 'hes_num'] = e_hes
                         st.session_state['cotizaciones'].at[row_idx, 'factura'] = e_inv
                         if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
                             st.success("Datos corregidos"); time.sleep(1); st.rerun()
-
                 with t3:
                     st.error("⚠️ CUIDADO: Esto eliminará la factura y devolverá la cotización a la pestaña 'Por Facturar'.")
                     if st.button("🗑️ Eliminar Factura (Revertir a Backlog)"):
@@ -676,7 +649,7 @@ def modulo_finanzas():
                         st.session_state['cotizaciones'].at[row_idx, 'factura'] = ''
                         st.session_state['cotizaciones'].at[row_idx, 'pago'] = 'Pendiente'
                         if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
-                            st.success("Factura eliminada. Cotización devuelta al Backlog."); time.sleep(1); st.rerun()
+                            st.success("Factura eliminada."); time.sleep(1); st.rerun()
 
 def convert_to_usd(row):
     m = row['moneda']; v = row['total']
@@ -691,11 +664,6 @@ def modulo_dashboard():
     
     # 1. Asegurar DataFrame de Cotizaciones y su columna Año
     df_cots = st.session_state['cotizaciones'].copy()
-    
-    # --- SANITIZACIÓN: Asegurar columna equipo ---
-    if 'equipo_asignado' not in df_cots.columns:
-        df_cots['equipo_asignado'] = "N/A"
-    
     if not df_cots.empty:
         df_cots['fecha_dt'] = pd.to_datetime(df_cots['fecha'], errors='coerce')
         df_cots = df_cots.dropna(subset=['fecha_dt'])
@@ -757,8 +725,7 @@ def modulo_dashboard():
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Total Leads", len(df_leads_filtered))
         c2.metric("Cant. Abiertas", cant_abiertas) 
-        c3.metric("Pipeline (USD)", f"${monto_abierto_usd:,.0f}")
-        
+        c3.metric("Monto en Juego (Open)", f"${monto_abierto_usd:,.0f}")
         total_ops = len(df_cots_filtered); won_ops = len(df_cots_filtered[df_cots_filtered['estado'].isin(['Aprobada','Facturada'])])
         win_rate = (won_ops/total_ops*100) if total_ops > 0 else 0
         c4.metric("Tasa de Cierre", f"{win_rate:.1f}%")
@@ -819,6 +786,7 @@ def modulo_dashboard():
             st.divider()
             sel_rep = st.selectbox("Ver detalle de vendedor:", [d['name'] for e,d in users.items() if d.get('role') in ['Comercial', 'Super Admin', 'Finanzas']])
             if sel_rep:
+                # Mock user data for the visualizer below
                 user_data = next((d for e,d in users.items() if d['name'] == sel_rep), {})
                 df_my_sales = df_cots_filtered[(df_cots_filtered['vendedor'] == sel_rep) & (df_cots_filtered['estado'] == 'Facturada')]
         
@@ -954,7 +922,7 @@ def modulo_admin():
         st.markdown("---")
         for team, data in config_org.items():
             if not isinstance(data, dict): continue
-            with st.container():
+            with st.container(border=True): # Mejor visualización con borde
                 c1, c2, c3 = st.columns([2, 2, 3])
                 c1.markdown(f"### 🌍 {team}")
                 
@@ -1006,7 +974,6 @@ def modulo_admin():
                         users['_CONFIG_ORG'] = config_org
                         github_push_json('url_usuarios', users, st.session_state.get('users_sha'))
                         sync_users_after_update(); st.success("Guardado"); time.sleep(1); st.rerun()
-                st.divider()
 
     # ------------------ SECCIÓN CREAR USUARIO ------------------
     with tab_create:
@@ -1044,101 +1011,96 @@ def modulo_admin():
 
     # ------------------ SECCIÓN LISTAR/EDITAR USUARIOS ------------------
     with tab_list:
-        st.subheader("Usuarios Registrados")
-        clean_users = []
-        for u_email, u_data in users.items():
-            if u_email.startswith("_"): continue
-            
-            # Helper display
-            eq_show = u_data.get('equipo', [])
-            if isinstance(eq_show, list): eq_show = ", ".join(eq_show)
-            
-            clean_users.append({
-                "Email": u_email, "Nombre": u_data.get('name'), "Rol": u_data.get('role'), 
-                "Equipo": eq_show, "Sub-Equipo": u_data.get('sub_equipo', '-'),
-                "Meta $": f"${u_data.get('meta_rev', 0):,.0f}"
-            })
-        st.dataframe(pd.DataFrame(clean_users), use_container_width=True)
+        c_sel, c_info = st.columns([1, 2])
         
-        st.markdown("---"); st.subheader("✏️ Editar Perfil y Metas")
+        # Lista limpia para selector
         user_keys = [k for k in users.keys() if not k.startswith("_")]
-        edit_user = st.selectbox("Seleccionar Usuario", user_keys)
         
-        # Selector de AÑO para editar metas
-        curr_year_admin = datetime.now().year
-        sel_year_meta = st.selectbox("Editar Metas para el Año:", [curr_year_admin, curr_year_admin+1, curr_year_admin-1], key="sy_meta")
+        with c_sel:
+            st.subheader("Directorio")
+            # Mostrar tabla resumen para seleccionar visualmente
+            df_users = pd.DataFrame([
+                {"Email": k, "Nombre": v.get('name'), "Rol": v.get('role')} 
+                for k, v in users.items() if not k.startswith("_")
+            ])
+            st.dataframe(df_users, use_container_width=True, hide_index=True)
+            
+            st.markdown("---")
+            edit_user = st.selectbox("Seleccionar Usuario a Editar:", user_keys)
+        
+        with c_info:
+            if edit_user:
+                u = users[edit_user]
+                st.subheader(f"Editando: {u.get('name')}")
+                
+                # Selector de Año para editar metas
+                curr_year_admin = datetime.now().year
+                sel_year_meta = st.selectbox("Año de Metas:", [curr_year_admin, curr_year_admin+1, curr_year_admin-1], key="sy_meta")
 
-        if edit_user:
-            u = users[edit_user]
-            with st.expander(f"Configuración: {u.get('name')}", expanded=True):
-                c1, c2, c3 = st.columns(3)
-                new_role_e = c1.selectbox("Rol", ["Comercial", "Finanzas", "Super Admin"], index=["Comercial", "Finanzas", "Super Admin"].index(u.get('role', 'Comercial')))
-                
-                # Lógica dinámica para equipos en edición
-                config_org = users.get('_CONFIG_ORG', {})
-                team_opts = ["N/A"] + list(config_org.keys())
-                curr_teams = get_user_teams_list(u)
-                valid_defaults = [t for t in curr_teams if t in team_opts]
-                
-                # MULTI-EQUIPO SUPPORT
-                new_teams_e = c2.multiselect("Equipos", team_opts, default=valid_defaults)
-                
-                # Sub-equipo (simplificado a uno por ahora, o podría ser multi también)
-                sub_opts = ["N/A"]
-                for t in new_teams_e:
-                    if t in config_org: sub_opts += list(config_org[t]['subs'].keys())
-                
-                curr_sub = u.get('sub_equipo', 'N/A')
-                idx_sub = sub_opts.index(curr_sub) if curr_sub in sub_opts else 0
-                new_sub_e = c3.selectbox("Sub-Equipo", sub_opts, index=idx_sub, key="edit_sub")
+                # Container de Edición Principal
+                with st.container(border=True):
+                    st.markdown("##### 👤 Perfil y Equipos")
+                    c1, c2, c3 = st.columns(3)
+                    new_role_e = c1.selectbox("Rol", ["Comercial", "Finanzas", "Super Admin"], index=["Comercial", "Finanzas", "Super Admin"].index(u.get('role', 'Comercial')))
+                    
+                    # Lógica dinámica para equipos
+                    config_org = users.get('_CONFIG_ORG', {})
+                    team_opts = list(config_org.keys())
+                    curr_teams = get_user_teams_list(u)
+                    valid_defaults = [t for t in curr_teams if t in team_opts]
+                    
+                    new_teams_e = c2.multiselect("Equipos", team_opts, default=valid_defaults)
+                    
+                    sub_opts = ["N/A"]
+                    for t in new_teams_e:
+                        if t in config_org: sub_opts += list(config_org[t]['subs'].keys())
+                    
+                    curr_sub = u.get('sub_equipo', 'N/A')
+                    idx_sub = sub_opts.index(curr_sub) if curr_sub in sub_opts else 0
+                    new_sub_e = c3.selectbox("Sub-Equipo", sub_opts, index=idx_sub, key="edit_sub")
 
-                st.markdown(f"#### 🎯 Metas Anuales ({sel_year_meta})")
-                
-                # Cargar metas del año seleccionado (o 0 si no existen)
-                u_metas = u.get('metas_anuales', {})
-                u_metas_year = u_metas.get(str(sel_year_meta), {})
-                
-                col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-                m_rev = col_m1.number_input("Meta Facturación ($)", value=float(u_metas_year.get('rev', 0)))
-                m_big = col_m2.number_input("Meta Clientes Grandes", value=int(u_metas_year.get('big', 0)))
-                m_mid = col_m3.number_input("Meta Clientes Medianos", value=int(u_metas_year.get('mid', 0)))
-                m_sml = col_m4.number_input("Meta Clientes Chicos", value=int(u_metas_year.get('sml', 0)))
+                # Container de Metas
+                with st.container(border=True):
+                    st.markdown(f"##### 🎯 Metas Anuales ({sel_year_meta})")
+                    u_metas = u.get('metas_anuales', {})
+                    u_metas_year = u_metas.get(str(sel_year_meta), {})
+                    
+                    col_m1, col_m2 = st.columns(2)
+                    m_rev = col_m1.number_input("Facturación ($)", value=float(u_metas_year.get('rev', 0)))
+                    
+                    col_c1, col_c2, col_c3 = st.columns(3)
+                    m_big = col_c1.number_input("Grandes (>20k)", value=int(u_metas_year.get('big', 0)))
+                    m_mid = col_c2.number_input("Medianos", value=int(u_metas_year.get('mid', 0)))
+                    m_sml = col_c3.number_input("Chicos", value=int(u_metas_year.get('sml', 0)))
 
-                if st.button("💾 Guardar Cambios"):
-                    # Actualizar datos básicos
+                if st.button("💾 Guardar Cambios del Usuario", type="primary"):
                     users[edit_user].update({'role': new_role_e, 'equipo': new_teams_e, 'sub_equipo': new_sub_e})
-                    
-                    # Actualizar metas del año específico
                     if 'metas_anuales' not in users[edit_user]: users[edit_user]['metas_anuales'] = {}
-                    users[edit_user]['metas_anuales'][str(sel_year_meta)] = {
-                        'rev': m_rev, 'big': m_big, 'mid': m_mid, 'sml': m_sml
-                    }
-                    
+                    users[edit_user]['metas_anuales'][str(sel_year_meta)] = {'rev': m_rev, 'big': m_big, 'mid': m_mid, 'sml': m_sml}
                     if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
-                        sync_users_after_update(); st.success("Perfil actualizado"); time.sleep(1); st.rerun()
+                        sync_users_after_update(); st.success("Guardado correctamente"); time.sleep(1); st.rerun()
                 
-                st.divider()
-                st.warning("⚠️ Zona Seguridad")
-                pass_rst = st.text_input("Nueva Contraseña (Admin)", type="password")
-                if st.button("Reestablecer Clave"):
-                    if pass_rst:
-                        users[edit_user]['password_hash'] = bcrypt.hashpw(pass_rst.encode(), bcrypt.gensalt()).decode()
-                        if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
-                            sync_users_after_update(); st.success("Clave cambiada")
-                
-                st.markdown("### 🚨 Zona de Peligro")
-                if edit_user == st.session_state['current_user']: st.error("No puedes eliminar tu propio usuario.")
-                else:
-                    if st.button(f"🗑️ Eliminar a {edit_user}", type="primary"):
-                        del users[edit_user]
-                        if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
-                            sync_users_after_update(); st.success(f"Usuario {edit_user} eliminado."); time.sleep(1); st.rerun()
+                # Container de Seguridad (Rojo)
+                with st.expander("🚨 Zona de Seguridad (Contraseña / Eliminar)"):
+                    p1, p2 = st.columns(2)
+                    pass_rst = p1.text_input("Nueva Contraseña", type="password")
+                    if p1.button("Reestablecer Clave"):
+                        if pass_rst:
+                            users[edit_user]['password_hash'] = bcrypt.hashpw(pass_rst.encode(), bcrypt.gensalt()).decode()
+                            if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
+                                sync_users_after_update(); st.success("Clave cambiada")
+                    
+                    if edit_user != st.session_state['current_user']:
+                        if p2.button(f"🗑️ Eliminar a {edit_user}", type="primary"):
+                            del users[edit_user]
+                            if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
+                                sync_users_after_update(); st.success("Eliminado"); time.sleep(1); st.rerun()
+                    else:
+                        p2.warning("No puedes eliminarte a ti mismo.")
 
     # ------------------ SECCIÓN RESET SISTEMA ------------------
     with tab_reset:
         st.error("⚠️ ZONA DE PELIGRO EXTREMO: Aquí puedes borrar datos masivamente.")
-        st.markdown("Útil para limpiar datos de prueba antes de salir a producción.")
-        
         c1, c2, c3, c4 = st.columns(4)
         del_leads = c1.checkbox("Borrar TODOS los Leads y Clientes")
         del_cots = c2.checkbox("Borrar TODAS las Cotizaciones y Ventas")
@@ -1163,26 +1125,20 @@ def modulo_admin():
                 else: success = False
             
             if del_teams or del_metas:
-                # Modificamos el diccionario local de usuarios
                 new_users = st.session_state['users_db'].copy()
-                
                 if del_teams:
-                    new_users['_CONFIG_ORG'] = {} # Borrar equipos
-                    # Limpiar asignaciones en usuarios
+                    new_users['_CONFIG_ORG'] = {}
                     for k, v in new_users.items():
                         if k.startswith("_"): continue
                         v['equipo'] = []
                         v['sub_equipo'] = 'N/A'
-                
                 if del_metas:
                     for k, v in new_users.items():
                         if k.startswith("_"): continue
-                        v['meta_rev'] = 0
-                        v['metas_anuales'] = {}
-                
+                        v['meta_rev'] = 0; v['metas_anuales'] = {}
                 if github_push_json('url_usuarios', new_users, st.session_state.get('users_sha')):
                     sync_users_after_update()
-                    st.success("Configuraciones de usuarios/equipos reseteadas.")
+                    st.success("Configuraciones reseteadas.")
                 else: success = False
 
             if success:
@@ -1196,7 +1152,6 @@ def modulo_admin():
 with st.sidebar:
     if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=130)
     role = st.session_state.get('current_role', 'Comercial')
-    # REORDERED MENU: Dashboard is now first
     opts = ["Dashboards", "Seguimiento", "Prospectos y Clientes", "Cotizador", "Finanzas"]; icos = ['bar-chart', 'check', 'person', 'file', 'currency-dollar']
     if role == "Super Admin": opts.append("Usuarios"); icos.append("people")
     menu = option_menu("Menú", opts, icons=icos, default_index=0)

@@ -88,12 +88,10 @@ if 'users_db' not in st.session_state:
         hashed = bcrypt.hashpw(st.secrets['auth']['admin_pass'].encode(), bcrypt.gensalt()).decode()
         users = {admin_email: {"name": "Super Admin", "role": "Super Admin", "password_hash": hashed}}
     
-    # Estructura base si no existe
+    # Inicialización LIMPIA de estructura organizacional
     if '_CONFIG_ORG' not in users:
-        users['_CONFIG_ORG'] = {
-            "Cono Sur": {"metas_anuales": {}, "subs": {}},
-            "Internacional": {"metas_anuales": {}, "subs": {}}
-        }
+        users['_CONFIG_ORG'] = {} # Empieza vacío, el admin crea los equipos
+        
     st.session_state['users_db'] = users
     st.session_state['users_sha'] = sha
 
@@ -105,7 +103,8 @@ if 'leads_db' not in st.session_state:
 if 'cotizaciones' not in st.session_state:
     cots, sha_c = github_get_json('url_cotizaciones')
     st.session_state['cotizaciones_sha'] = sha_c
-    cols = ['id', 'fecha', 'empresa', 'pais', 'total', 'moneda', 'estado', 'vendedor', 'oc', 'factura', 'pago', 'hes', 'hes_num', 'items', 'pdf_data', 'idioma']
+    # 'equipo_asignado' es crucial para la lógica multi-equipo
+    cols = ['id', 'fecha', 'empresa', 'pais', 'total', 'moneda', 'estado', 'vendedor', 'equipo_asignado', 'oc', 'factura', 'pago', 'hes', 'hes_num', 'items', 'pdf_data', 'idioma']
     if cots and isinstance(cots, list):
         df = pd.DataFrame(cots)
         for c in cols:
@@ -278,6 +277,19 @@ def clasificar_cliente(monto):
     if 5000 <= monto < 10000: return "Chico"
     return "Micro"
 
+def get_user_teams_list(user_data):
+    """Devuelve la lista de equipos de un usuario, manejando formatos antiguos"""
+    eq = user_data.get('equipo', 'N/A')
+    if isinstance(eq, list): return eq
+    if eq == 'N/A' or not eq: return []
+    return [eq]
+
+def get_user_subteams_list(user_data):
+    eq = user_data.get('sub_equipo', 'N/A')
+    if isinstance(eq, list): return eq
+    if eq == 'N/A' or not eq: return []
+    return [eq]
+
 # --- PDF ENGINE ---
 class PDF(FPDF):
     def header(self):
@@ -413,10 +425,25 @@ def modulo_cotizador():
     ps = c1.selectbox("🌎 País", TODOS_LOS_PAISES, index=idx); ctx = obtener_contexto(ps)
     c2.info(f"Moneda: **{ctx['mon']}** | Tarifas: **{ctx['tipo']}** {ctx.get('niv', '')}")
     st.markdown("---"); cc1,cc2,cc3,cc4=st.columns(4)
+    
+    # Lógica de asignación de equipo si el usuario tiene múltiples
+    curr_user_data = st.session_state['users_db'].get(st.session_state['current_user'], {})
+    user_teams = get_user_teams_list(curr_user_data)
+    
+    # Si tiene más de un equipo, permite seleccionar. Si tiene uno, lo pre-selecciona.
+    if len(user_teams) > 1:
+        sel_team_cot = cc4.selectbox("Asignar a Equipo", user_teams)
+    elif len(user_teams) == 1:
+        sel_team_cot = user_teams[0]
+        cc4.text_input("Equipo", value=sel_team_cot, disabled=True)
+    else:
+        sel_team_cot = "N/A"
+        cc4.text_input("Equipo", value="N/A", disabled=True)
+        
     clientes_list = sorted(list(set([x['Cliente'] for x in st.session_state['leads_db']] + st.session_state['cotizaciones']['empresa'].unique().tolist())))
     emp = cc1.selectbox(txt['client'], [""]+clientes_list)
     con = cc2.text_input("Contacto"); ema = cc3.text_input("Email")
-    ven = cc4.text_input("Ejecutivo", value=st.session_state['users_db'][st.session_state['current_user']].get('name',''), disabled=True)
+    
     st.markdown("---"); tp, ts = st.tabs([txt['sec_prod'], txt['sec_serv']])
     with tp:
         c1,c2,c3,c4 = st.columns([3,1,1,1]); lp = ctx['dp']['Producto'].unique().tolist() if not ctx['dp'].empty else []
@@ -477,7 +504,15 @@ def modulo_cotizador():
                     links_html = f'<a href="data:application/pdf;base64,{b64}" download="Cot_{nid}.pdf">📄 Descargar PDF</a>'
                     st.success("✅ Cotización generada")
                 st.markdown(links_html, unsafe_allow_html=True)
-                row = {'id':nid, 'fecha':str(datetime.now().date()), 'empresa':emp, 'pais':ps, 'total':fin, 'moneda':ctx['mon'], 'estado':'Enviada', 'vendedor':ven, 'oc':'', 'factura':'', 'pago':'Pendiente', 'hes':False, 'hes_num':'', 'items': st.session_state['carrito'], 'pdf_data': ext, 'idioma': idi}
+                
+                # GUARDAR CON EQUIPO ASIGNADO
+                row = {
+                    'id':nid, 'fecha':str(datetime.now().date()), 'empresa':emp, 'pais':ps, 'total':fin, 'moneda':ctx['mon'], 
+                    'estado':'Enviada', 'vendedor':ven, 'equipo_asignado': sel_team_cot,
+                    'oc':'', 'factura':'', 'pago':'Pendiente', 'hes':False, 'hes_num':'', 
+                    'items': st.session_state['carrito'], 'pdf_data': ext, 'idioma': idi
+                }
+                
                 st.session_state['cotizaciones'] = pd.concat([st.session_state['cotizaciones'], pd.DataFrame([row])], ignore_index=True)
                 if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
                     st.info("Guardado en Base de Datos"); st.session_state['carrito']=[]; time.sleep(2)
@@ -492,10 +527,22 @@ def modulo_seguimiento():
     df = df.sort_values('fecha', ascending=False)
     curr_user = st.session_state['current_user']
     curr_role = st.session_state.get('current_role', 'Comercial')
+    
+    # Filtro por equipo (lista)
     if curr_role == 'Comercial':
-        my_team = st.session_state['users_db'][curr_user].get('equipo', 'N/A')
-        team_names = [u['name'] for k, u in st.session_state['users_db'].items() if u.get('equipo') == my_team]
-        df = df[df['vendedor'].isin(team_names)]
+        my_teams = get_user_teams_list(st.session_state['users_db'][curr_user])
+        # Ver cotizaciones donde el vendedor sea alguien de mis equipos O yo mismo
+        # Obtener todos los miembros que pertenezcan a cualquiera de mis equipos
+        allowed_sellers = []
+        for u, d in st.session_state['users_db'].items():
+             u_teams = get_user_teams_list(d)
+             # Si hay intersección entre los equipos de este usuario y los mios
+             if set(u_teams) & set(my_teams):
+                 allowed_sellers.append(d['name'])
+        
+        # Filtro: O soy yo el vendedor, O el vendedor es de mi equipo
+        df = df[df['vendedor'].isin(allowed_sellers)]
+    
     c1, c2 = st.columns([3, 1])
     with c1: st.info("ℹ️ Gestión: Cambia estado a 'Aprobada' para que Finanzas facture.")
     with c2: ver_historial = st.checkbox("📂 Ver Historial Completo", value=False)
@@ -504,7 +551,8 @@ def modulo_seguimiento():
         if df.empty: st.warning("No tienes cotizaciones abiertas.")
     for i, r in df.iterrows():
         lang_tag = f"[{r.get('idioma','ES')}]"
-        label = f"{lang_tag} {r['fecha']} | {r['id']} | {r['empresa']} | {r['moneda']} {r['total']:,.0f}"
+        team_tag = f"({r.get('equipo_asignado', 'N/A')})"
+        label = f"{lang_tag} {team_tag} {r['fecha']} | {r['id']} | {r['empresa']} | {r['moneda']} {r['total']:,.0f}"
         if r['estado'] == 'Facturada': label += " ✅ (Facturada)"
         elif r['estado'] == 'Aprobada': label += " 🎉 (Cerrada)"
         elif r['estado'] == 'Enviada': label += " ⏳ (En Negociación)"
@@ -694,59 +742,40 @@ def modulo_dashboard():
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Total Leads", len(df_leads_filtered))
         c2.metric("Cant. Abiertas", cant_abiertas) 
-        c3.metric("Monto en Juego (Open)", f"${monto_abierto_usd:,.0f}")
+        c3.metric("Pipeline (USD)", f"${monto_abierto_usd:,.0f}")
         total_ops = len(df_cots_filtered); won_ops = len(df_cots_filtered[df_cots_filtered['estado'].isin(['Aprobada','Facturada'])])
         win_rate = (won_ops/total_ops*100) if total_ops > 0 else 0
         c4.metric("Tasa de Cierre", f"{win_rate:.1f}%")
-        
-        df_fact = df_cots_filtered[df_cots_filtered['estado']=='Facturada'].copy()
-        if not df_fact.empty:
-             df_fact['Total_USD'] = df_fact.apply(convert_to_usd, axis=1)
-             facturado_usd = df_fact['Total_USD'].sum()
-        else: facturado_usd = 0
-        
-        c5.metric("Facturado (USD)", f"${facturado_usd:,.0f}")
-        
+        facturado = df_cots_filtered[df_cots_filtered['estado']=='Facturada']['total'].sum() if not df_cots_filtered.empty else 0
+        c5.metric("Total Facturado", f"${facturado:,.0f}")
         st.divider()
         if not df_cots_filtered.empty:
             fig = px.pie(df_cots_filtered, names='estado', title="Distribución Estado Cotizaciones")
             st.plotly_chart(fig, use_container_width=True)
-
     with tab_kpi:
         st.subheader("Desempeño Individual vs Metas")
         
-        # SI ES FINANZAS/ADMIN: VE A TODOS
         if curr_role in ['Super Admin', 'Finanzas']:
             st.info("Vista de Supervisor: Selecciona un comercial o ve la tabla resumen.")
-            
             # Tabla Resumen Todos
             summary_data = []
             for u_email, u_data in users.items():
                 if u_data.get('role') == 'Comercial' or u_email == curr_email:
-                    # FETCH GOAL BY SELECTED YEARS
-                    user_metas = u_data.get('metas_anuales', {})
-                    goal_rev = sum(float(user_metas.get(str(y), {}).get('rev', 0)) for y in selected_years)
-                    # Fallback to legacy field if no annual meta
+                    u_metas = u_data.get('metas_anuales', {})
+                    goal_rev = sum(float(u_metas.get(str(y), {}).get('rev', 0)) for y in selected_years)
                     if goal_rev == 0: goal_rev = float(u_data.get('meta_rev', 0))
-
-                    df_u_sales = df_cots_filtered[(df_cots_filtered['vendedor'] == u_data.get('name')) & (df_cots_filtered['estado'] == 'Facturada')].copy()
                     
+                    df_u_sales = df_cots_filtered[(df_cots_filtered['vendedor'] == u_data.get('name')) & (df_cots_filtered['estado'] == 'Facturada')].copy()
                     real_rev_usd = 0
                     if not df_u_sales.empty:
                         df_u_sales['Total_USD'] = df_u_sales.apply(convert_to_usd, axis=1)
                         real_rev_usd = df_u_sales['Total_USD'].sum()
-                    
                     pct = (real_rev_usd / goal_rev * 100) if goal_rev > 0 else 0
-                    summary_data.append({
-                        "Nombre": u_data.get('name'),
-                        "Equipo": u_data.get('equipo'),
-                        "Meta (USD)": f"${goal_rev:,.0f}",
-                        "Venta (USD)": f"${real_rev_usd:,.0f}",
-                        "Cumplimiento": f"{pct:.1f}%"
-                    })
+                    
+                    # Convertir lista de equipos a string para mostrar
+                    eq_str = ", ".join(get_user_teams_list(u_data))
+                    summary_data.append({"Nombre": u_data.get('name'), "Equipo(s)": eq_str, "Meta (USD)": f"${goal_rev:,.0f}", "Venta (USD)": f"${real_rev_usd:,.0f}", "Cumplimiento": f"{pct:.1f}%"})
             st.dataframe(pd.DataFrame(summary_data), use_container_width=True)
-            
-            # Drill Down
             st.divider()
             sel_rep = st.selectbox("Ver detalle de vendedor:", [d['name'] for e,d in users.items() if d.get('role') in ['Comercial', 'Super Admin', 'Finanzas']])
             if sel_rep:
@@ -768,55 +797,48 @@ def modulo_dashboard():
             else:
                 my_rev = 0; cnt_big=0; cnt_mid=0; cnt_sml=0
 
-            # Calculate Aggregate Goals based on selected years
             u_metas = user_data.get('metas_anuales', {})
             goal_rev = sum(float(u_metas.get(str(y), {}).get('rev', 0)) for y in selected_years)
             goal_big = sum(int(u_metas.get(str(y), {}).get('big', 0)) for y in selected_years)
             goal_mid = sum(int(u_metas.get(str(y), {}).get('mid', 0)) for y in selected_years)
             goal_sml = sum(int(u_metas.get(str(y), {}).get('sml', 0)) for y in selected_years)
-            
-            # Fallback legacy
-            if goal_rev == 0:
-                goal_rev = float(user_data.get('meta_rev', 0))
-                goal_big = int(user_data.get('meta_cli_big', 0))
-                goal_mid = int(user_data.get('meta_cli_mid', 0))
-                goal_sml = int(user_data.get('meta_cli_small', 0))
+            if goal_rev == 0: goal_rev = float(user_data.get('meta_rev', 0)) # Fallback
 
             c1, c2 = st.columns(2)
             with c1:
                 st.markdown(f"#### Resultados: {user_data.get('name','')}")
-                if goal_rev > 0: 
-                    st.progress(min(my_rev/goal_rev, 1.0), text=f"Facturación: ${my_rev:,.0f} / ${goal_rev:,.0f} USD ({my_rev/goal_rev*100:.1f}%)")
+                if goal_rev > 0: st.progress(min(my_rev/goal_rev, 1.0), text=f"Facturación: ${my_rev:,.0f} / ${goal_rev:,.0f} USD ({my_rev/goal_rev*100:.1f}%)")
                 else: st.info("Sin meta asignada.")
                 c_a, c_b, c_c = st.columns(3)
                 c_a.metric("Grandes", f"{cnt_big}/{goal_big}"); c_b.metric("Medianos", f"{cnt_mid}/{goal_mid}"); c_c.metric("Chicos", f"{cnt_sml}/{goal_sml}")
 
             with c2:
-                my_team = user_data.get('equipo', 'Sin Equipo')
-                st.markdown(f"#### 🏆 Equipo: {my_team}")
+                # Mostrar el equipo principal o el primero de la lista
+                my_teams = get_user_teams_list(user_data)
                 
-                # Fetch team goals based on selected years
-                team_config_db = users.get('_CONFIG_ORG', {})
-                team_goal_rev = 0
-                if isinstance(team_config_db.get(my_team), dict):
-                    t_metas = team_config_db[my_team].get('metas_anuales', {})
-                    team_goal_rev = sum(float(t_metas.get(str(y), 0)) for y in selected_years)
-                    # Fallback old structure
-                    if team_goal_rev == 0: team_goal_rev = float(team_config_db[my_team].get('meta', 0))
-                
-                team_members = [d['name'] for e,d in users.items() if d.get('equipo') == my_team]
-                df_team_sales = df_cots_filtered[(df_cots_filtered['vendedor'].isin(team_members)) & (df_cots_filtered['estado'] == 'Facturada')].copy()
-                
-                if not df_team_sales.empty:
-                    df_team_sales['Total_USD'] = df_team_sales.apply(convert_to_usd, axis=1)
-                    team_rev = df_team_sales['Total_USD'].sum()
-                else: team_rev = 0
-                
-                if team_goal_rev > 0:
-                    st.progress(min(team_rev/team_goal_rev, 1.0), text=f"Meta Equipo: ${team_rev:,.0f} / ${team_goal_rev:,.0f} USD")
-                    fig_team = go.Figure(go.Indicator(mode = "gauge+number+delta", value = team_rev, domain = {'x': [0, 1], 'y': [0, 1]}, title = {'text': "Avance Equipo"}, delta = {'reference': team_goal_rev}, gauge = {'axis': {'range': [None, team_goal_rev*1.2]}, 'bar': {'color': "#003366"}}))
-                    st.plotly_chart(fig_team, use_container_width=True)
-                else: st.info(f"Sin meta global definida para {my_team}.")
+                if my_teams:
+                    for team_name in my_teams:
+                        st.markdown(f"#### 🏆 Equipo: {team_name}")
+                        team_config_db = users.get('_CONFIG_ORG', {})
+                        team_goal_rev = 0
+                        if isinstance(team_config_db.get(team_name), dict):
+                            t_metas = team_config_db[team_name].get('metas_anuales', {})
+                            team_goal_rev = sum(float(t_metas.get(str(y), 0)) for y in selected_years)
+                            if team_goal_rev == 0: team_goal_rev = float(team_config_db[team_name].get('meta', 0))
+                        
+                        # Filtrar cotizaciones asignadas específicamente a este equipo
+                        df_team_sales = df_cots_filtered[(df_cots_filtered['equipo_asignado'] == team_name) & (df_cots_filtered['estado'] == 'Facturada')].copy()
+                        
+                        if not df_team_sales.empty:
+                            df_team_sales['Total_USD'] = df_team_sales.apply(convert_to_usd, axis=1)
+                            team_rev = df_team_sales['Total_USD'].sum()
+                        else: team_rev = 0
+                        
+                        if team_goal_rev > 0:
+                            st.progress(min(team_rev/team_goal_rev, 1.0), text=f"Meta: ${team_rev:,.0f} / ${team_goal_rev:,.0f} USD")
+                        else: st.info(f"Sin meta global definida.")
+                else:
+                    st.info("Usuario sin equipo asignado.")
 
     with tab_lead:
         if not df_leads_filtered.empty:
@@ -830,7 +852,6 @@ def modulo_dashboard():
                 fig_source = px.bar(df_leads_filtered, x='Origen', title="Fuentes", color='Origen')
                 st.plotly_chart(fig_source, use_container_width=True)
         else: st.info("No hay datos de leads.")
-
     with tab_sale:
         if not df_cots_filtered.empty:
             df_sales = df_cots_filtered[df_cots_filtered['estado'].isin(['Aprobada','Facturada'])]
@@ -840,14 +861,12 @@ def modulo_dashboard():
                 st.plotly_chart(fig_line, use_container_width=True)
             else: st.info("Aún no hay ventas cerradas.")
         else: st.info("Sin datos.")
-
     with tab_bill:
         df_inv = df_cots_filtered[df_cots_filtered['estado']=='Facturada']
         if not df_inv.empty:
             c1, c2, c3 = st.columns(3)
             tot_inv = df_inv['total'].sum()
             tot_paid = df_inv[df_inv['pago']=='Pagada']['total'].sum()
-            tot_pend = tot_inv - tot_paid
             c1.metric("Total Facturado", f"${tot_inv:,.0f}")
             c2.metric("Cobrado", f"${tot_paid:,.0f}")
             fig_pay = px.pie(df_inv, names='pago', title="Status de Cobranza", hole=0.4, color_discrete_map={'Pagada':'green', 'Pendiente':'orange', 'Vencida':'red'})
@@ -857,19 +876,13 @@ def modulo_dashboard():
 def modulo_admin():
     st.title("👥 Administración de Usuarios y Metas")
     users = st.session_state['users_db']
-    
     tab_list, tab_create, tab_teams, tab_reset = st.tabs(["⚙️ Gestionar Usuarios", "➕ Crear Nuevo Usuario", "🏢 Estructura Organizacional", "🔥 RESET SISTEMA"])
     
-    # ------------------ SECCIÓN EQUIPOS POR AÑO ------------------
     with tab_teams:
         st.subheader("Configuración de Metas Globales (Por Año)")
         config_org = users.get('_CONFIG_ORG', {})
-        
-        # Selector de Año para configurar
         current_year = datetime.now().year
         sel_year_team = st.selectbox("Configurar Metas para el Año:", [current_year, current_year+1, current_year-1])
-        
-        # Crear Nuevo Equipo
         with st.expander("Crear Nuevo Equipo Principal"):
             new_team_name = st.text_input("Nombre del Equipo (ej: Europa)")
             if st.button("Crear Equipo"):
@@ -878,20 +891,14 @@ def modulo_admin():
                     users['_CONFIG_ORG'] = config_org
                     if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
                         sync_users_after_update(); st.success("Equipo creado"); st.rerun()
-
-        # Editar Equipos Existentes
         st.markdown("---")
         for team, data in config_org.items():
             if not isinstance(data, dict): continue
             with st.container():
                 c1, c2, c3 = st.columns([2, 2, 3])
                 c1.markdown(f"### 🌍 {team}")
-                
-                # Obtener meta del año seleccionado
                 curr_meta = float(data.get('metas_anuales', {}).get(str(sel_year_team), 0))
                 new_meta_team = c2.number_input(f"Meta {team} ({sel_year_team}) USD", value=curr_meta, key=f"m_{team}_{sel_year_team}")
-                
-                # Sub-equipos
                 new_sub = c3.text_input(f"Nuevo Sub-equipo en {team}", key=f"ns_{team}")
                 if c3.button(f"Agregar Sub-equipo a {team}", key=f"b_{team}"):
                     if new_sub:
@@ -899,8 +906,6 @@ def modulo_admin():
                         users['_CONFIG_ORG'] = config_org
                         github_push_json('url_usuarios', users, st.session_state.get('users_sha'))
                         sync_users_after_update(); st.rerun()
-
-                # Gestión Sub-equipos (Ver/Borrar)
                 if data['subs']:
                     with c3.expander("Ver/Borrar Sub-equipos"):
                         for sub_name in list(data['subs'].keys()):
@@ -911,23 +916,12 @@ def modulo_admin():
                                 users['_CONFIG_ORG'] = config_org
                                 github_push_json('url_usuarios', users, st.session_state.get('users_sha'))
                                 sync_users_after_update(); st.rerun()
-                
-                # Gestión Equipo Principal (Renombrar/Borrar)
                 with c1.expander("Opciones Avanzadas"):
-                    new_name = st.text_input("Renombrar Equipo", value=team, key=f"ren_{team}")
-                    if st.button("Renombrar", key=f"b_ren_{team}"):
-                        config_org[new_name] = config_org.pop(team)
-                        users['_CONFIG_ORG'] = config_org
-                        github_push_json('url_usuarios', users, st.session_state.get('users_sha'))
-                        sync_users_after_update(); st.rerun()
-                    
                     if st.button("Eliminar Equipo Completo", key=f"del_team_{team}", type="primary"):
                         del config_org[team]
                         users['_CONFIG_ORG'] = config_org
                         github_push_json('url_usuarios', users, st.session_state.get('users_sha'))
                         sync_users_after_update(); st.rerun()
-
-                # Guardar meta
                 if new_meta_team != curr_meta:
                     if st.button(f"Guardar Meta {team}", key=f"gm_{team}"):
                         if 'metas_anuales' not in data: data['metas_anuales'] = {}
@@ -936,88 +930,58 @@ def modulo_admin():
                         github_push_json('url_usuarios', users, st.session_state.get('users_sha'))
                         sync_users_after_update(); st.success("Guardado"); time.sleep(1); st.rerun()
                 st.divider()
-
-    # ------------------ SECCIÓN CREAR USUARIO ------------------
+    
     with tab_create:
         st.subheader("Alta de Nuevo Usuario")
         config_org = users.get('_CONFIG_ORG', {})
         team_options = list(config_org.keys())
-        
         with st.form("new_user_form"):
             new_email = st.text_input("Correo Electrónico (Usuario)")
             new_name = st.text_input("Nombre Completo")
             new_role = st.selectbox("Rol", ["Comercial", "Finanzas", "Super Admin"])
-            
-            c_t1, c_t2 = st.columns(2)
-            sel_team = c_t1.selectbox("Equipo Principal", ["N/A"] + team_options)
-            
-            sub_options = []
-            if sel_team != "N/A" and sel_team in config_org:
-                sub_options = list(config_org[sel_team]['subs'].keys())
-            sel_sub_team = c_t2.selectbox("Sub-Equipo", ["N/A"] + sub_options)
-
+            sel_teams = st.multiselect("Equipos Principales", team_options)
             new_pass = st.text_input("Contraseña Inicial", type="password")
-            
             if st.form_submit_button("Crear Usuario"):
                 if not new_email or not new_pass: st.error("Faltan datos")
                 elif new_email in users: st.error("Usuario existe")
                 else:
                     hashed = bcrypt.hashpw(new_pass.encode(), bcrypt.gensalt()).decode()
-                    users[new_email] = {
-                        "name": new_name, "role": new_role, "password_hash": hashed, 
-                        "equipo": sel_team, "sub_equipo": sel_sub_team,
-                        "meta_rev": 0, "metas_anuales": {} 
-                    }
+                    users[new_email] = {"name": new_name, "role": new_role, "password_hash": hashed, "equipo": sel_teams, "meta_rev": 0, "metas_anuales": {}}
                     if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
                         sync_users_after_update(); st.success(f"Usuario {new_email} creado"); time.sleep(1); st.rerun()
 
-    # ------------------ SECCIÓN LISTAR/EDITAR USUARIOS ------------------
     with tab_list:
         st.subheader("Usuarios Registrados")
         clean_users = []
         for u_email, u_data in users.items():
             if u_email.startswith("_"): continue
-            clean_users.append({
-                "Email": u_email, "Nombre": u_data.get('name'), "Rol": u_data.get('role'), 
-                "Equipo": u_data.get('equipo'), "Sub-Equipo": u_data.get('sub_equipo', '-'),
-                "Meta $": f"${u_data.get('meta_rev', 0):,.0f}"
-            })
+            # Manejo de lista para mostrar string
+            eq_show = u_data.get('equipo', [])
+            if isinstance(eq_show, list): eq_show = ", ".join(eq_show)
+            clean_users.append({"Email": u_email, "Nombre": u_data.get('name'), "Rol": u_data.get('role'), "Equipos": eq_show})
         st.dataframe(pd.DataFrame(clean_users), use_container_width=True)
-        
         st.markdown("---"); st.subheader("✏️ Editar Perfil y Metas")
         user_keys = [k for k in users.keys() if not k.startswith("_")]
         edit_user = st.selectbox("Seleccionar Usuario", user_keys)
-        
-        # Selector de AÑO para editar metas
         curr_year_admin = datetime.now().year
         sel_year_meta = st.selectbox("Editar Metas para el Año:", [curr_year_admin, curr_year_admin+1, curr_year_admin-1], key="sy_meta")
-
+        
         if edit_user:
             u = users[edit_user]
             with st.expander(f"Configuración: {u.get('name')}", expanded=True):
-                c1, c2, c3 = st.columns(3)
+                c1, c2 = st.columns(2)
                 new_role_e = c1.selectbox("Rol", ["Comercial", "Finanzas", "Super Admin"], index=["Comercial", "Finanzas", "Super Admin"].index(u.get('role', 'Comercial')))
                 
-                # Lógica dinámica para equipos en edición
                 config_org = users.get('_CONFIG_ORG', {})
-                team_opts = ["N/A"] + list(config_org.keys())
-                curr_team = u.get('equipo', 'N/A')
-                idx_team = team_opts.index(curr_team) if curr_team in team_opts else 0
-                new_team_e = c2.selectbox("Equipo", team_opts, index=idx_team, key="edit_team")
-                
-                sub_opts = ["N/A"]
-                if new_team_e != "N/A" and new_team_e in config_org:
-                    sub_opts += list(config_org[new_team_e]['subs'].keys())
-                curr_sub = u.get('sub_equipo', 'N/A')
-                idx_sub = sub_opts.index(curr_sub) if curr_sub in sub_opts else 0
-                new_sub_e = c3.selectbox("Sub-Equipo", sub_opts, index=idx_sub, key="edit_sub")
+                team_opts = list(config_org.keys())
+                curr_teams = get_user_teams_list(u)
+                # Filtramos para que solo muestre equipos que aun existan en la config
+                valid_defaults = [t for t in curr_teams if t in team_opts]
+                new_teams_e = c2.multiselect("Equipos", team_opts, default=valid_defaults)
 
                 st.markdown(f"#### 🎯 Metas Anuales ({sel_year_meta})")
-                
-                # Cargar metas del año seleccionado (o 0 si no existen)
                 u_metas = u.get('metas_anuales', {})
                 u_metas_year = u_metas.get(str(sel_year_meta), {})
-                
                 col_m1, col_m2, col_m3, col_m4 = st.columns(4)
                 m_rev = col_m1.number_input("Meta Facturación ($)", value=float(u_metas_year.get('rev', 0)))
                 m_big = col_m2.number_input("Meta Clientes Grandes", value=int(u_metas_year.get('big', 0)))
@@ -1025,27 +989,18 @@ def modulo_admin():
                 m_sml = col_m4.number_input("Meta Clientes Chicos", value=int(u_metas_year.get('sml', 0)))
 
                 if st.button("💾 Guardar Cambios"):
-                    # Actualizar datos básicos
-                    users[edit_user].update({'role': new_role_e, 'equipo': new_team_e, 'sub_equipo': new_sub_e})
-                    
-                    # Actualizar metas del año específico
+                    users[edit_user].update({'role': new_role_e, 'equipo': new_teams_e})
                     if 'metas_anuales' not in users[edit_user]: users[edit_user]['metas_anuales'] = {}
-                    users[edit_user]['metas_anuales'][str(sel_year_meta)] = {
-                        'rev': m_rev, 'big': m_big, 'mid': m_mid, 'sml': m_sml
-                    }
-                    
+                    users[edit_user]['metas_anuales'][str(sel_year_meta)] = {'rev': m_rev, 'big': m_big, 'mid': m_mid, 'sml': m_sml}
                     if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
                         sync_users_after_update(); st.success("Perfil actualizado"); time.sleep(1); st.rerun()
-                
                 st.divider()
-                st.warning("⚠️ Zona Seguridad")
                 pass_rst = st.text_input("Nueva Contraseña (Admin)", type="password")
                 if st.button("Reestablecer Clave"):
                     if pass_rst:
                         users[edit_user]['password_hash'] = bcrypt.hashpw(pass_rst.encode(), bcrypt.gensalt()).decode()
                         if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
                             sync_users_after_update(); st.success("Clave cambiada")
-                
                 st.markdown("### 🚨 Zona de Peligro")
                 if edit_user == st.session_state['current_user']: st.error("No puedes eliminar tu propio usuario.")
                 else:
@@ -1054,72 +1009,48 @@ def modulo_admin():
                         if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
                             sync_users_after_update(); st.success(f"Usuario {edit_user} eliminado."); time.sleep(1); st.rerun()
 
-    # ------------------ SECCIÓN RESET SISTEMA ------------------
     with tab_reset:
         st.error("⚠️ ZONA DE PELIGRO EXTREMO: Aquí puedes borrar datos masivamente.")
         st.markdown("Útil para limpiar datos de prueba antes de salir a producción.")
-        
         c1, c2, c3, c4 = st.columns(4)
         del_leads = c1.checkbox("Borrar TODOS los Leads y Clientes")
         del_cots = c2.checkbox("Borrar TODAS las Cotizaciones y Ventas")
         del_teams = c3.checkbox("Borrar Estructura de Equipos")
         del_metas = c4.checkbox("Resetear Metas de Usuarios")
-        
         confirm_text = st.text_input("Escribe 'CONFIRMAR' para habilitar el borrado:")
-        
         if st.button("Ejecutar Limpieza", type="primary", disabled=(confirm_text != "CONFIRMAR")):
             success = True
-            
             if del_leads:
                 if github_push_json('url_leads', [], st.session_state.get('leads_sha')):
-                    st.session_state['leads_db'] = []
-                    st.success("Leads eliminados.")
+                    st.session_state['leads_db'] = []; st.success("Leads eliminados.")
                 else: success = False
-            
             if del_cots:
                 if github_push_json('url_cotizaciones', [], st.session_state.get('cotizaciones_sha')):
                     st.session_state['cotizaciones'] = pd.DataFrame(columns=st.session_state['cotizaciones'].columns)
                     st.success("Cotizaciones eliminadas.")
                 else: success = False
-            
             if del_teams or del_metas:
-                # Modificamos el diccionario local de usuarios
                 new_users = st.session_state['users_db'].copy()
-                
                 if del_teams:
-                    new_users['_CONFIG_ORG'] = {
-                        "Cono Sur": {"metas_anuales": {}, "subs": {}},
-                        "Internacional": {"metas_anuales": {}, "subs": {}}
-                    }
-                    # Limpiar asignaciones en usuarios
+                    new_users['_CONFIG_ORG'] = {}
                     for k, v in new_users.items():
                         if k.startswith("_"): continue
-                        v['equipo'] = 'N/A'
-                        v['sub_equipo'] = 'N/A'
-                
+                        v['equipo'] = []
                 if del_metas:
                     for k, v in new_users.items():
                         if k.startswith("_"): continue
-                        v['meta_rev'] = 0
-                        v['metas_anuales'] = {}
-                
+                        v['meta_rev'] = 0; v['metas_anuales'] = {}
                 if github_push_json('url_usuarios', new_users, st.session_state.get('users_sha')):
-                    sync_users_after_update()
-                    st.success("Configuraciones de usuarios/equipos reseteadas.")
+                    sync_users_after_update(); st.success("Configuraciones reseteadas.")
                 else: success = False
-
-            if success:
-                st.balloons()
-                time.sleep(2)
-                st.rerun()
-            else:
-                st.error("Hubo un error al intentar borrar algunos datos.")
+            if success: st.balloons(); time.sleep(2); st.rerun()
+            else: st.error("Hubo un error al intentar borrar algunos datos.")
 
 # --- MENU LATERAL ---
 with st.sidebar:
     if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=130)
     role = st.session_state.get('current_role', 'Comercial')
-    opts = ["Seguimiento", "Prospectos y Clientes", "Cotizador", "Dashboards", "Finanzas"]; icos = ['check', 'person', 'file', 'bar-chart', 'currency-dollar']
+    opts = ["Dashboards", "Seguimiento", "Prospectos y Clientes", "Cotizador", "Finanzas"]; icos = ['bar-chart', 'check', 'person', 'file', 'currency-dollar']
     if role == "Super Admin": opts.append("Usuarios"); icos.append("people")
     menu = option_menu("Menú", opts, icons=icos, default_index=0)
     if st.button("Salir"): logout()

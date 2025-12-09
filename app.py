@@ -88,12 +88,11 @@ if 'users_db' not in st.session_state:
         hashed = bcrypt.hashpw(st.secrets['auth']['admin_pass'].encode(), bcrypt.gensalt()).decode()
         users = {admin_email: {"name": "Super Admin", "role": "Super Admin", "password_hash": hashed}}
     
-    # Inicializar estructura organizacional si no existe
+    # Estructura base si no existe
     if '_CONFIG_ORG' not in users:
-        # Estructura antigua plana o nueva con años
         users['_CONFIG_ORG'] = {
-            "Cono Sur": {"metas_anuales": {}, "subs": {"Ventas A": 0, "Ventas B": 0}},
-            "Internacional": {"metas_anuales": {}, "subs": {"Brasil": 0, "USA": 0}}
+            "Cono Sur": {"metas_anuales": {}, "subs": {}},
+            "Internacional": {"metas_anuales": {}, "subs": {}}
         }
     st.session_state['users_db'] = users
     st.session_state['users_sha'] = sha
@@ -695,8 +694,7 @@ def modulo_dashboard():
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Total Leads", len(df_leads_filtered))
         c2.metric("Cant. Abiertas", cant_abiertas) 
-        c3.metric("Pipeline (USD)", f"${monto_abierto_usd:,.0f}")
-        
+        c3.metric("Monto en Juego (Open)", f"${monto_abierto_usd:,.0f}")
         total_ops = len(df_cots_filtered); won_ops = len(df_cots_filtered[df_cots_filtered['estado'].isin(['Aprobada','Facturada'])])
         win_rate = (won_ops/total_ops*100) if total_ops > 0 else 0
         c4.metric("Tasa de Cierre", f"{win_rate:.1f}%")
@@ -860,7 +858,7 @@ def modulo_admin():
     st.title("👥 Administración de Usuarios y Metas")
     users = st.session_state['users_db']
     
-    tab_list, tab_create, tab_teams = st.tabs(["⚙️ Gestionar Usuarios", "➕ Crear Nuevo Usuario", "🏢 Estructura Organizacional"])
+    tab_list, tab_create, tab_teams, tab_reset = st.tabs(["⚙️ Gestionar Usuarios", "➕ Crear Nuevo Usuario", "🏢 Estructura Organizacional", "🔥 RESET SISTEMA"])
     
     # ------------------ SECCIÓN EQUIPOS POR AÑO ------------------
     with tab_teams:
@@ -901,7 +899,34 @@ def modulo_admin():
                         users['_CONFIG_ORG'] = config_org
                         github_push_json('url_usuarios', users, st.session_state.get('users_sha'))
                         sync_users_after_update(); st.rerun()
+
+                # Gestión Sub-equipos (Ver/Borrar)
+                if data['subs']:
+                    with c3.expander("Ver/Borrar Sub-equipos"):
+                        for sub_name in list(data['subs'].keys()):
+                            sc1, sc2 = st.columns([3,1])
+                            sc1.text(f"🔹 {sub_name}")
+                            if sc2.button("🗑️", key=f"del_sub_{team}_{sub_name}"):
+                                del data['subs'][sub_name]
+                                users['_CONFIG_ORG'] = config_org
+                                github_push_json('url_usuarios', users, st.session_state.get('users_sha'))
+                                sync_users_after_update(); st.rerun()
                 
+                # Gestión Equipo Principal (Renombrar/Borrar)
+                with c1.expander("Opciones Avanzadas"):
+                    new_name = st.text_input("Renombrar Equipo", value=team, key=f"ren_{team}")
+                    if st.button("Renombrar", key=f"b_ren_{team}"):
+                        config_org[new_name] = config_org.pop(team)
+                        users['_CONFIG_ORG'] = config_org
+                        github_push_json('url_usuarios', users, st.session_state.get('users_sha'))
+                        sync_users_after_update(); st.rerun()
+                    
+                    if st.button("Eliminar Equipo Completo", key=f"del_team_{team}", type="primary"):
+                        del config_org[team]
+                        users['_CONFIG_ORG'] = config_org
+                        github_push_json('url_usuarios', users, st.session_state.get('users_sha'))
+                        sync_users_after_update(); st.rerun()
+
                 # Guardar meta
                 if new_meta_team != curr_meta:
                     if st.button(f"Guardar Meta {team}", key=f"gm_{team}"):
@@ -954,7 +979,8 @@ def modulo_admin():
             if u_email.startswith("_"): continue
             clean_users.append({
                 "Email": u_email, "Nombre": u_data.get('name'), "Rol": u_data.get('role'), 
-                "Equipo": u_data.get('equipo'), "Sub-Equipo": u_data.get('sub_equipo', '-')
+                "Equipo": u_data.get('equipo'), "Sub-Equipo": u_data.get('sub_equipo', '-'),
+                "Meta $": f"${u_data.get('meta_rev', 0):,.0f}"
             })
         st.dataframe(pd.DataFrame(clean_users), use_container_width=True)
         
@@ -972,6 +998,7 @@ def modulo_admin():
                 c1, c2, c3 = st.columns(3)
                 new_role_e = c1.selectbox("Rol", ["Comercial", "Finanzas", "Super Admin"], index=["Comercial", "Finanzas", "Super Admin"].index(u.get('role', 'Comercial')))
                 
+                # Lógica dinámica para equipos en edición
                 config_org = users.get('_CONFIG_ORG', {})
                 team_opts = ["N/A"] + list(config_org.keys())
                 curr_team = u.get('equipo', 'N/A')
@@ -1026,6 +1053,67 @@ def modulo_admin():
                         del users[edit_user]
                         if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
                             sync_users_after_update(); st.success(f"Usuario {edit_user} eliminado."); time.sleep(1); st.rerun()
+
+    # ------------------ SECCIÓN RESET SISTEMA ------------------
+    with tab_reset:
+        st.error("⚠️ ZONA DE PELIGRO EXTREMO: Aquí puedes borrar datos masivamente.")
+        st.markdown("Útil para limpiar datos de prueba antes de salir a producción.")
+        
+        c1, c2, c3, c4 = st.columns(4)
+        del_leads = c1.checkbox("Borrar TODOS los Leads y Clientes")
+        del_cots = c2.checkbox("Borrar TODAS las Cotizaciones y Ventas")
+        del_teams = c3.checkbox("Borrar Estructura de Equipos")
+        del_metas = c4.checkbox("Resetear Metas de Usuarios")
+        
+        confirm_text = st.text_input("Escribe 'CONFIRMAR' para habilitar el borrado:")
+        
+        if st.button("Ejecutar Limpieza", type="primary", disabled=(confirm_text != "CONFIRMAR")):
+            success = True
+            
+            if del_leads:
+                if github_push_json('url_leads', [], st.session_state.get('leads_sha')):
+                    st.session_state['leads_db'] = []
+                    st.success("Leads eliminados.")
+                else: success = False
+            
+            if del_cots:
+                if github_push_json('url_cotizaciones', [], st.session_state.get('cotizaciones_sha')):
+                    st.session_state['cotizaciones'] = pd.DataFrame(columns=st.session_state['cotizaciones'].columns)
+                    st.success("Cotizaciones eliminadas.")
+                else: success = False
+            
+            if del_teams or del_metas:
+                # Modificamos el diccionario local de usuarios
+                new_users = st.session_state['users_db'].copy()
+                
+                if del_teams:
+                    new_users['_CONFIG_ORG'] = {
+                        "Cono Sur": {"metas_anuales": {}, "subs": {}},
+                        "Internacional": {"metas_anuales": {}, "subs": {}}
+                    }
+                    # Limpiar asignaciones en usuarios
+                    for k, v in new_users.items():
+                        if k.startswith("_"): continue
+                        v['equipo'] = 'N/A'
+                        v['sub_equipo'] = 'N/A'
+                
+                if del_metas:
+                    for k, v in new_users.items():
+                        if k.startswith("_"): continue
+                        v['meta_rev'] = 0
+                        v['metas_anuales'] = {}
+                
+                if github_push_json('url_usuarios', new_users, st.session_state.get('users_sha')):
+                    sync_users_after_update()
+                    st.success("Configuraciones de usuarios/equipos reseteadas.")
+                else: success = False
+
+            if success:
+                st.balloons()
+                time.sleep(2)
+                st.rerun()
+            else:
+                st.error("Hubo un error al intentar borrar algunos datos.")
 
 # --- MENU LATERAL ---
 with st.sidebar:

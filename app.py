@@ -378,7 +378,7 @@ def modulo_crm():
                         st.session_state['leads_db'] = new_db; st.success("Lead guardado correctamente."); time.sleep(1); st.rerun()
                     else: st.error("Error al guardar en GitHub")
         
-        # --- SECCIÓN GESTIONAR / EDITAR LEAD (FILTRADO POR NO CLIENTES) ---
+        # --- SECCIÓN GESTIONAR / EDITAR LEAD ---
         st.divider()
         st.subheader("🖊️ Gestionar / Editar Lead")
         
@@ -624,7 +624,14 @@ def modulo_cotizador():
         cc4.text_input("Célula", value="N/A", disabled=True)
         
     clientes_list = sorted(list(set([x['Cliente'] for x in st.session_state['leads_db']] + st.session_state['cotizaciones']['empresa'].unique().tolist())))
-    emp = cc1.selectbox(txt['client'], [""]+clientes_list)
+    
+    # --- MODIFICACIÓN: CLIENTE NUEVO DESDE COTIZADOR ---
+    use_new_client = cc1.checkbox("¿Cliente Nuevo?", value=False)
+    if use_new_client:
+        emp = cc1.text_input(txt['client'], placeholder="Nombre Empresa")
+    else:
+        emp = cc1.selectbox(txt['client'], [""] + clientes_list)
+
     con = cc2.text_input("Contacto"); ema = cc3.text_input("Email")
     ven = cc4.text_input("Ejecutivo", value=st.session_state['users_db'][st.session_state['current_user']].get('name',''), disabled=True)
     st.markdown("---"); tp, ts = st.tabs([txt['sec_prod'], txt['sec_serv']])
@@ -662,6 +669,30 @@ def modulo_cotizador():
             st.metric("TOTAL",f"{ctx['mon']} {fin:,.2f}")
             if st.button("GUARDAR", type="primary"):
                 if not emp: st.error("Falta Empresa"); return
+                
+                # --- AUTO CREAR LEAD SI NO EXISTE ---
+                current_leads = st.session_state['leads_db']
+                exists = any(l['Cliente'].lower() == emp.lower() for l in current_leads)
+                
+                if not exists and emp:
+                    new_auto_lead = {
+                        "id": int(time.time()),
+                        "Cliente": emp,
+                        "Area": "Auto-Creado",
+                        "Pais": ps,
+                        "Industria": "Otros",
+                        "Web": "",
+                        "Contactos": f"{con} ({ema})",
+                        "Origen": "Cotizador",
+                        "Etapa": "Propuesta",
+                        "Expectativa": "Generado desde Cotizador",
+                        "Responsable": st.session_state['current_user'],
+                        "Fecha": str(datetime.now().date())
+                    }
+                    st.session_state['leads_db'].append(new_auto_lead)
+                    github_push_json('url_leads', st.session_state['leads_db'], st.session_state.get('leads_sha'))
+                    st.toast(f"✨ Cliente '{emp}' agregado automáticamente a Leads!")
+
                 nid=f"TP-{random.randint(1000,9999)}"; cli={'empresa':emp,'contacto':con,'email':ema}
                 ext={'fee':vfee,'bank':bnk,'desc':dsc,'desc_name':dsc_name, 'pais':ps,'id':nid}
                 prod_items = [x for x in st.session_state['carrito'] if x['Ítem']=='Evaluación']

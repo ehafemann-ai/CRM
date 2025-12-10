@@ -49,7 +49,7 @@ if not usuario_es_super_admin:
     st.markdown(hide_menu_style, unsafe_allow_html=True)
 
 # ==============================================================================
-# 4. FUNCIONES GITHUB (API) - CORREGIDA PARA ACTUALIZAR SHA
+# 4. FUNCIONES GITHUB (API)
 # ==============================================================================
 def github_get_json(url_key):
     try:
@@ -73,9 +73,8 @@ def github_push_json(url_key, data_dict, sha):
         headers = {"Authorization": f"token {st.secrets['github']['token']}", "Accept": "application/vnd.github.v3+json"}
         r = requests.put(url, headers=headers, json=payload)
         
+        # --- FIX: ACTUALIZAR SHA LOCALMENTE ---
         if r.status_code in [200, 201]:
-            # --- CORRECCIÓN CRÍTICA: Actualizar SHA localmente ---
-            # Esto evita el error de desincronización al hacer múltiples ediciones seguidas
             new_sha = r.json()['content']['sha']
             if 'leads' in url_key: st.session_state['leads_sha'] = new_sha
             elif 'cotizaciones' in url_key: st.session_state['cotizaciones_sha'] = new_sha
@@ -511,6 +510,30 @@ def modulo_crm():
                 st.write(f"**Contactos:** {lead_info.get('Contactos','')}"); st.write(f"**Dolor:** {lead_info.get('Expectativa','')}"); st.divider()
             c1,c2,c3,c4 = st.columns(4)
             c1.metric("Total Cotizado", f"${tot:,.0f}"); c2.metric("Total Facturado", f"${fac_cli:,.0f}"); c3.metric("Total Pagado", f"${pag_cli:,.0f}"); c4.metric("# Cotizaciones", len(dfc))
+            
+            # --- NUEVA SECCIÓN: EDICIÓN DATOS CLIENTE ---
+            client_idx = next((i for i, l in enumerate(st.session_state['leads_db']) if l['Cliente'] == sel), None)
+            if client_idx is not None:
+                with st.expander("⚙️ Editar Datos del Cliente", expanded=False):
+                    with st.form(f"form_edit_client_{client_idx}"):
+                        c_data = st.session_state['leads_db'][client_idx]
+                        col_e1, col_e2 = st.columns(2)
+                        new_ind = col_e1.selectbox("Industria", ["Tecnología", "Finanzas", "Retail", "Minería", "Salud", "Educación", "Otros"], index=["Tecnología", "Finanzas", "Retail", "Minería", "Salud", "Educación", "Otros"].index(c_data.get('Industria', 'Otros')) if c_data.get('Industria') in ["Tecnología", "Finanzas", "Retail", "Minería", "Salud", "Educación", "Otros"] else 6)
+                        new_web = col_e2.text_input("Web", value=c_data.get('Web', ''))
+                        new_cont = st.text_area("Contactos", value=c_data.get('Contactos', ''))
+                        
+                        if st.form_submit_button("Actualizar Datos Cliente"):
+                            st.session_state['leads_db'][client_idx]['Industria'] = new_ind
+                            st.session_state['leads_db'][client_idx]['Web'] = new_web
+                            st.session_state['leads_db'][client_idx]['Contactos'] = new_cont
+                            
+                            if github_push_json('url_leads', st.session_state['leads_db'], st.session_state.get('leads_sha')):
+                                st.success("Cliente actualizado exitosamente")
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.error("Error al actualizar en GitHub")
+            
             st.dataframe(dfc[['fecha','id','pais','total','estado','factura','pago']], use_container_width=True)
 
     with tab_import:
@@ -1168,7 +1191,7 @@ def modulo_admin():
                     for k, v in new_users.items():
                         if k.startswith("_"): continue
                         v['equipo'] = []
-                        v['sub_equipo'] = 'N/A'
+                        v['sub_equipo'] = 'N'
                 if del_metas:
                     for k, v in new_users.items():
                         if k.startswith("_"): continue

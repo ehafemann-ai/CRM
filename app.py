@@ -49,7 +49,7 @@ if not usuario_es_super_admin:
     st.markdown(hide_menu_style, unsafe_allow_html=True)
 
 # ==============================================================================
-# 4. FUNCIONES GITHUB (API)
+# 4. FUNCIONES GITHUB (API) - CORREGIDA PARA ACTUALIZAR SHA
 # ==============================================================================
 def github_get_json(url_key):
     try:
@@ -72,7 +72,16 @@ def github_push_json(url_key, data_dict, sha):
         if sha: payload["sha"] = sha
         headers = {"Authorization": f"token {st.secrets['github']['token']}", "Accept": "application/vnd.github.v3+json"}
         r = requests.put(url, headers=headers, json=payload)
-        return r.status_code in [200, 201]
+        
+        if r.status_code in [200, 201]:
+            # --- CORRECCIÓN CRÍTICA: Actualizar SHA localmente ---
+            # Esto evita el error de desincronización al hacer múltiples ediciones seguidas
+            new_sha = r.json()['content']['sha']
+            if 'leads' in url_key: st.session_state['leads_sha'] = new_sha
+            elif 'cotizaciones' in url_key: st.session_state['cotizaciones_sha'] = new_sha
+            elif 'usuarios' in url_key: st.session_state['users_sha'] = new_sha
+            return True
+        return False
     except: return False
 
 def sync_users_after_update():
@@ -396,6 +405,7 @@ def modulo_crm():
                         st.markdown("##### 📝 Editar Información")
                         with st.form(f"edit_lead_{lead_idx}"):
                             e_contacts = st.text_area("Contactos", value=lead_data.get('Contactos', ''))
+                            # Opciones de Etapa Extendidas
                             e_etapa = st.selectbox("Etapa", ["Prospección", "Contacto", "Reunión", "Propuesta", "Cerrado Ganado", "Cerrado Perdido", "Cliente Activo"], 
                                                    index=["Prospección", "Contacto", "Reunión", "Propuesta", "Cerrado Ganado", "Cerrado Perdido", "Cliente Activo"].index(lead_data.get('Etapa', 'Prospección')) if lead_data.get('Etapa') in ["Prospección", "Contacto", "Reunión", "Propuesta", "Cerrado Ganado", "Cerrado Perdido", "Cliente Activo"] else 0)
                             e_expectativa = st.text_area("Expectativa / Dolor", value=lead_data.get('Expectativa', ''))
@@ -411,7 +421,7 @@ def modulo_crm():
                                     st.session_state['leads_db'] = leads_list
                                     st.success("Lead actualizado correctamente."); time.sleep(1); st.rerun()
                                 else:
-                                    st.error("Error al actualizar en GitHub")
+                                    st.error("Error al actualizar en GitHub. Intente nuevamente (re-sincronizando).")
 
                     with col_info:
                         st.markdown(f"##### 📂 Historial de {sel_lead_name}")

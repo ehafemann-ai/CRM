@@ -126,6 +126,10 @@ if 'carrito' not in st.session_state: st.session_state['carrito'] = []
 if 'auth_status' not in st.session_state: st.session_state['auth_status'] = False
 if 'current_user' not in st.session_state: st.session_state['current_user'] = None
 
+# Variables para edición/clonación
+if 'cot_edit_data' not in st.session_state: st.session_state['cot_edit_data'] = None
+if 'menu_idx' not in st.session_state: st.session_state['menu_idx'] = 0
+
 # ==============================================================================
 # 6. LOGIN & DATOS EXTERNOS
 # ==============================================================================
@@ -597,6 +601,15 @@ def modulo_crm():
             except Exception as e: st.error(f"Error al leer el archivo: {e}")
 
 def modulo_cotizador():
+    # --- CHECK FOR EDIT MODE ---
+    edit_data = st.session_state.get('cot_edit_data')
+    if edit_data:
+        st.info(f"✏️ MODO EDICIÓN: Estás modificando la cotización ID: {edit_data.get('id_orig')} - {edit_data.get('empresa')}")
+        if st.button("❌ Cancelar Edición y Limpiar", type="secondary"):
+            st.session_state['carrito'] = []
+            st.session_state['cot_edit_data'] = None
+            st.rerun()
+
     cl, ct = st.columns([1, 5]); idi = cl.selectbox("🌐", ["ES", "PT", "EN"]); txt = TEXTOS[idi]; ct.title(txt['title'])
     c1,c2,c3,c4 = st.columns(4)
     v_uf = TASAS['UF']; v_usd = TASAS['USD_CLP']; v_brl = TASAS['USD_BRL']
@@ -606,7 +619,12 @@ def modulo_cotizador():
 
     st.markdown("---"); c1, c2 = st.columns([1, 2])
     idx = TODOS_LOS_PAISES.index("Chile") if "Chile" in TODOS_LOS_PAISES else 0
-    ps = c1.selectbox("🌎 País", TODOS_LOS_PAISES, index=idx); ctx = obtener_contexto(ps)
+    
+    # Pre-fill country if editing
+    default_pais = edit_data.get('pais') if edit_data else None
+    idx_p = TODOS_LOS_PAISES.index(default_pais) if default_pais in TODOS_LOS_PAISES else idx
+    
+    ps = c1.selectbox("🌎 País", TODOS_LOS_PAISES, index=idx_p); ctx = obtener_contexto(ps)
     c2.info(f"Moneda: **{ctx['mon']}** | Tarifas: **{ctx['tipo']}** {ctx.get('niv', '')}")
     st.markdown("---"); cc1,cc2,cc3,cc4=st.columns(4)
     
@@ -627,12 +645,18 @@ def modulo_cotizador():
     
     # --- MODIFICACIÓN: CLIENTE NUEVO DESDE COTIZADOR ---
     use_new_client = cc1.checkbox("¿Cliente Nuevo?", value=False)
+    
+    default_emp = edit_data.get('empresa') if edit_data else ""
+    default_con = edit_data.get('contacto') if edit_data else ""
+    default_ema = edit_data.get('email') if edit_data else ""
+    
     if use_new_client:
-        emp = cc1.text_input(txt['client'], placeholder="Nombre Empresa")
+        emp = cc1.text_input(txt['client'], placeholder="Nombre Empresa", value=default_emp)
     else:
-        emp = cc1.selectbox(txt['client'], [""] + clientes_list)
+        idx_cli = clientes_list.index(default_emp) if default_emp in clientes_list else 0
+        emp = cc1.selectbox(txt['client'], [""] + clientes_list, index=idx_cli + 1 if default_emp in clientes_list else 0)
 
-    con = cc2.text_input("Contacto"); ema = cc3.text_input("Email")
+    con = cc2.text_input("Contacto", value=default_con); ema = cc3.text_input("Email", value=default_ema)
     ven = cc4.text_input("Ejecutivo", value=st.session_state['users_db'][st.session_state['current_user']].get('name',''), disabled=True)
     st.markdown("---"); tp, ts = st.tabs([txt['sec_prod'], txt['sec_serv']])
     with tp:
@@ -714,17 +738,33 @@ def modulo_cotizador():
         eva = sum(item['Total'] for item in st.session_state['carrito'] if item['Ítem']=='Evaluación')
         cL, cR = st.columns([3,1])
         with cR:
-            fee=st.checkbox("Fee 10%",False); bnk=st.number_input("Bank",0.0)
+            # Recuperar valores si estamos editando
+            def_fee = False
+            def_bank = 0.0
+            def_dsc_name = "Descuento"
+            def_dsc_val = 0.0
+            
+            if edit_data:
+                # Intentar mapear fee y bank
+                if edit_data.get('fee', 0) > 0: def_fee = True
+                def_bank = float(edit_data.get('bank', 0))
+                def_dsc_name = edit_data.get('desc_name', "Descuento")
+                def_dsc_val = float(edit_data.get('desc', 0))
+
+            fee=st.checkbox("Fee 10%", value=def_fee); bnk=st.number_input("Bank", value=def_bank)
             
             # --- MODIFICACIÓN: Lógica de Descuento Avanzada ---
             st.markdown("##### Descuento")
-            dsc_name = st.text_input("Glosa Descuento", value="Descuento")
-            # Selector de tipo de descuento actualizado
-            tipo_desc = st.selectbox("Tipo de Descuento", ["Monto Fijo ($)", "Porcentaje (%)", "Simular Volumen (Precio por Tramo)"], key="sel_tipo_desc")
+            dsc_name = st.text_input("Glosa Descuento", value=def_dsc_name)
+            
+            # Si hay un descuento cargado, lo mostramos como Monto Fijo por defecto para simplificar la edición
+            idx_desc_type = 0 if def_dsc_val == 0 else 0 # Default a monto fijo si editamos
+            tipo_desc = st.selectbox("Tipo de Descuento", ["Monto Fijo ($)", "Porcentaje (%)", "Simular Volumen (Precio por Tramo)"], key="sel_tipo_desc", index=idx_desc_type)
             
             dsc = 0.0
             if tipo_desc == "Monto Fijo ($)":
-                dsc = st.number_input("Monto Desc", 0.0, step=100.0, key="in_monto_desc")
+                val_init = def_dsc_val if def_dsc_val > 0 else 0.0
+                dsc = st.number_input("Monto Desc", value=val_init, step=100.0, key="in_monto_desc")
             elif tipo_desc == "Porcentaje (%)":
                 pct_val = st.number_input("Porcentaje %", 0.0, 100.0, 0.0, step=1.0, key="in_pct_desc")
                 dsc = sub * (pct_val / 100)
@@ -761,7 +801,9 @@ def modulo_cotizador():
             vfee=eva*0.10 if fee else 0; tn,tv=get_impuestos(ps,sub,eva); fin=sub+vfee+tv+bnk-dsc
             st.metric("TOTAL",f"{ctx['mon']} {fin:,.2f}")
             
-            if st.button("GUARDAR", type="primary"):
+            # --- BOTONES DE ACCIÓN (GUARDAR / EDITAR) ---
+            
+            def guardar_cotizacion(es_update=False):
                 if not emp: st.error("Falta Empresa"); return
                 
                 # --- AUTO CREAR LEAD SI NO EXISTE ---
@@ -785,13 +827,21 @@ def modulo_cotizador():
                     }
                     st.session_state['leads_db'].append(new_auto_lead)
                     github_push_json('url_leads', st.session_state['leads_db'], st.session_state.get('leads_sha'))
-                    st.toast(f"✨ Cliente '{emp}' agregado automáticamente a Leads!")
 
-                nid=f"TP-{random.randint(1000,9999)}"; cli={'empresa':emp,'contacto':con,'email':ema}
+                # ID Logic
+                if es_update and edit_data:
+                    nid = edit_data['id_orig']
+                else:
+                    nid=f"TP-{random.randint(1000,9999)}"
+
+                cli={'empresa':emp,'contacto':con,'email':ema}
                 ext={'fee':vfee,'bank':bnk,'desc':dsc,'desc_name':dsc_name, 'pais':ps,'id':nid}
+                
+                # Generación PDF (Solo visualización/link, la lógica interna no cambia)
                 prod_items = [x for x in st.session_state['carrito'] if x['Ítem']=='Evaluación']
                 serv_items = [x for x in st.session_state['carrito'] if x['Ítem']=='Servicio']
                 links_html = ""
+                
                 if ps == "Chile" and prod_items and serv_items:
                     sub_p = sum(x['Total'] for x in prod_items); fee_p = sub_p*0.10 if fee else 0; tax_p = sub_p*0.19; tot_p = sub_p + fee_p + tax_p
                     calc_p = {'subtotal':sub_p, 'fee':fee_p, 'tax_name':"IVA (19%)", 'tax_val':tax_p, 'total':tot_p}
@@ -803,20 +853,51 @@ def modulo_cotizador():
                     pdf_s = generar_pdf_final(EMPRESAS['Chile_Servicios'], cli, serv_items, calc_s, idi, ext)
                     b64_s = base64.b64encode(pdf_s).decode('latin-1')
                     links_html += f'<a href="data:application/pdf;base64,{b64_s}" download="Cot_{nid}_Servicios.pdf">📄 Descargar Cotización (Servicios - Ltda)</a>'
-                    st.success("✅ Generadas 2 cotizaciones separadas (SpA y Servicios)")
                 else:
                     ent = get_empresa(ps, st.session_state['carrito'])
                     calc = {'subtotal':sub, 'fee':vfee, 'tax_name':tn, 'tax_val':tv, 'total':fin}
                     pdf = generar_pdf_final(ent, cli, st.session_state['carrito'], calc, idi, ext)
                     b64 = base64.b64encode(pdf).decode('latin-1')
                     links_html = f'<a href="data:application/pdf;base64,{b64}" download="Cot_{nid}.pdf">📄 Descargar PDF</a>'
-                    st.success("✅ Cotización generada")
+
+                st.success("✅ Cotización generada/actualizada")
                 st.markdown(links_html, unsafe_allow_html=True)
-                row = {'id':nid, 'fecha':str(datetime.now().date()), 'empresa':emp, 'pais':ps, 'total':fin, 'moneda':ctx['mon'], 'estado':'Enviada', 'vendedor':ven, 'equipo_asignado': sel_team_cot, 'oc':'', 'factura':'', 'pago':'Pendiente', 'hes':False, 'hes_num':'', 'items': st.session_state['carrito'], 'pdf_data': ext, 'idioma': idi}
-                st.session_state['cotizaciones'] = pd.concat([st.session_state['cotizaciones'], pd.DataFrame([row])], ignore_index=True)
+                
+                # Guardar Dataframe
+                row_data = {'id':nid, 'fecha':str(datetime.now().date()), 'empresa':emp, 'pais':ps, 'total':fin, 'moneda':ctx['mon'], 'estado':'Enviada', 'vendedor':ven, 'equipo_asignado': sel_team_cot, 'oc':'', 'factura':'', 'pago':'Pendiente', 'hes':False, 'hes_num':'', 'items': st.session_state['carrito'], 'pdf_data': ext, 'idioma': idi}
+                
+                df_cots = st.session_state['cotizaciones']
+                if es_update:
+                    # Update row
+                    idx = df_cots[df_cots['id'] == nid].index
+                    if not idx.empty:
+                        for k, v in row_data.items():
+                            df_cots.at[idx[0], k] = v
+                    else:
+                        st.error("No se encontró el ID original para actualizar.")
+                        return
+                else:
+                    # Append new
+                    st.session_state['cotizaciones'] = pd.concat([df_cots, pd.DataFrame([row_data])], ignore_index=True)
+
                 if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
-                    st.info("Guardado en Base de Datos"); st.session_state['carrito']=[]; time.sleep(2)
+                    st.info("Guardado en Base de Datos")
+                    st.session_state['carrito']=[]
+                    st.session_state['cot_edit_data'] = None # Clear edit mode
+                    time.sleep(2)
+                    st.rerun()
                 else: st.warning("Error al sincronizar con GitHub")
+
+            if edit_data:
+                col_upd, col_clon = st.columns(2)
+                if col_upd.button("🔄 Actualizar Cotización Original"):
+                    guardar_cotizacion(es_update=True)
+                if col_clon.button("💾 Guardar como Nueva (Clon)"):
+                    guardar_cotizacion(es_update=False)
+            else:
+                if st.button("GUARDAR", type="primary"):
+                    guardar_cotizacion(es_update=False)
+
         with cL: 
             if st.button("Limpiar"): st.session_state['carrito']=[]; st.rerun()
 
@@ -845,7 +926,7 @@ def modulo_seguimiento():
         elif r['estado'] == 'Aprobada': label += " 🎉 (Cerrada)"
         elif r['estado'] == 'Enviada': label += " ⏳ (En Negociación)"
         with st.expander(label):
-            col_status, col_req = st.columns(2)
+            col_status, col_req, col_act = st.columns([2, 2, 1])
             with col_status:
                 st.caption("Estado")
                 est_options = ["Enviada", "Aprobada", "Rechazada", "Perdida"]
@@ -857,7 +938,27 @@ def modulo_seguimiento():
                 st.caption("Requisitos")
                 hes_check = st.checkbox("Requiere HES", value=r.get('hes', False), key=f"hs_{r['id']}", disabled=disabled_st)
                 if hes_check: st.warning("⚠️ Requiere HES para facturar.")
-            if not disabled_st and st.button("Actualizar", key=f"btn_{r['id']}"):
+            with col_act:
+                st.caption("Acciones")
+                if st.button("✏️ Modificar / Clonar", key=f"edit_btn_{r['id']}"):
+                    # Extraer datos para edición
+                    pdf_data = r.get('pdf_data', {}) if isinstance(r.get('pdf_data'), dict) else {}
+                    st.session_state['carrito'] = r.get('items', [])
+                    st.session_state['cot_edit_data'] = {
+                        'id_orig': r['id'],
+                        'empresa': r['empresa'],
+                        'pais': r['pais'],
+                        'contacto': pdf_data.get('contacto', ''),
+                        'email': pdf_data.get('email', ''),
+                        'fee': pdf_data.get('fee', 0),
+                        'bank': pdf_data.get('bank', 0),
+                        'desc': pdf_data.get('desc', 0),
+                        'desc_name': pdf_data.get('desc_name', 'Descuento')
+                    }
+                    st.session_state['menu_idx'] = 3 # Índice del Cotizador
+                    st.rerun()
+
+            if not disabled_st and st.button("Actualizar Estado", key=f"btn_{r['id']}"):
                 st.session_state['cotizaciones'].at[i, 'estado'] = new_status
                 st.session_state['cotizaciones'].at[i, 'hes'] = hes_check
                 if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
@@ -1369,7 +1470,19 @@ with st.sidebar:
     # REORDERED MENU: Dashboard is now first
     opts = ["Dashboards", "Seguimiento", "Prospectos y Clientes", "Cotizador", "Finanzas"]; icos = ['bar-chart', 'check', 'person', 'file', 'currency-dollar']
     if role == "Super Admin": opts.append("Usuarios"); icos.append("people")
-    menu = option_menu("Menú", opts, icons=icos, default_index=0)
+    
+    # Manejo de la selección automática (Navegación entre pestañas)
+    if st.session_state['menu_idx'] < len(opts):
+        default_idx = st.session_state['menu_idx']
+    else:
+        default_idx = 0
+        
+    menu = option_menu("Menú", opts, icons=icos, default_index=default_idx, key='main_menu')
+    
+    # Actualizar el índice en sesión si el usuario hace clic manualmente
+    if menu in opts:
+        st.session_state['menu_idx'] = opts.index(menu)
+
     if st.button("Salir"): logout()
 
 if menu == "Seguimiento": modulo_seguimiento()

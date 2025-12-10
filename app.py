@@ -663,10 +663,36 @@ def modulo_cotizador():
         cL, cR = st.columns([3,1])
         with cR:
             fee=st.checkbox("Fee 10%",False); bnk=st.number_input("Bank",0.0)
+            
+            # --- MODIFICACIÓN: Lógica de Descuento Avanzada ---
+            st.markdown("##### Descuento")
             dsc_name = st.text_input("Glosa Descuento", value="Descuento")
-            dsc = st.number_input("Monto Desc", 0.0)
+            # Selector de tipo de descuento
+            tipo_desc = st.selectbox("Tipo de Descuento", ["Monto Fijo ($)", "Porcentaje (%)", "Por Tramo"], key="sel_tipo_desc")
+            
+            dsc = 0.0
+            if tipo_desc == "Monto Fijo ($)":
+                dsc = st.number_input("Monto Desc", 0.0, step=100.0, key="in_monto_desc")
+            elif tipo_desc == "Porcentaje (%)":
+                pct_val = st.number_input("Porcentaje %", 0.0, 100.0, 0.0, step=1.0, key="in_pct_desc")
+                dsc = sub * (pct_val / 100)
+                st.caption(f"Desc: {ctx['mon']} {dsc:,.2f}")
+            else: # Por Tramo
+                opciones_tramos = {
+                    "Tramo 1 (5%)": 0.05,
+                    "Tramo 2 (10%)": 0.10,
+                    "Tramo 3 (15%)": 0.15,
+                    "Tramo 4 (20%)": 0.20,
+                    "Tramo VIP (25%)": 0.25
+                }
+                sel_tramo = st.selectbox("Seleccione Tramo", list(opciones_tramos.keys()), key="sel_tramo_val")
+                dsc = sub * opciones_tramos[sel_tramo]
+                st.caption(f"Desc: {ctx['mon']} {dsc:,.2f}")
+            # --------------------------------------------------
+
             vfee=eva*0.10 if fee else 0; tn,tv=get_impuestos(ps,sub,eva); fin=sub+vfee+tv+bnk-dsc
             st.metric("TOTAL",f"{ctx['mon']} {fin:,.2f}")
+            
             if st.button("GUARDAR", type="primary"):
                 if not emp: st.error("Falta Empresa"); return
                 

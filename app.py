@@ -769,6 +769,99 @@ def modulo_seguimiento():
                 if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
                     st.success("Actualizado"); time.sleep(1); st.rerun()
 
+def modulo_finanzas():
+    st.title("💰 Gestión Financiera")
+    df = st.session_state['cotizaciones']
+    if df.empty: st.info("No hay datos."); return
+    tab_billing, tab_collection = st.tabs(["📝 Por Facturar (Backlog)", "💵 Historial Facturadas"])
+    with tab_billing:
+        st.subheader("Pendientes de Facturación")
+        to_bill = df[df['estado'] == 'Aprobada']
+        if to_bill.empty: st.success("¡Excelente! No hay pendientes.")
+        else:
+            for i, r in to_bill.iterrows():
+                with st.container():
+                    lang_tag = f"[{r.get('idioma','ES')}]"
+                    st.markdown(f"**{lang_tag} {r['empresa']}** | ID: {r['id']} | Total: {r['moneda']} {r['total']:,.0f}")
+                    if r.get('hes'): st.error("🚨 REQUISITO: Esta venta requiere N° HES o MIGO.")
+                    if r.get('items') and isinstance(r['items'], list):
+                        cli = {'empresa':r['empresa'], 'contacto':'', 'email':''} 
+                        ext = r.get('pdf_data', {'id':r['id'], 'pais':r['pais'], 'bank':0, 'desc':0})
+                        prod_items = [x for x in r['items'] if x['Ítem']=='Evaluación']
+                        serv_items = [x for x in r['items'] if x['Ítem']=='Servicio']
+                        idi_saved = r.get('idioma', 'ES')
+                        pdf_links = ""
+                        if r['pais'] == "Chile" and prod_items and serv_items:
+                             sub_p = sum(x['Total'] for x in prod_items); tax_p = sub_p*0.19; tot_p = sub_p*1.19
+                             calc_p = {'subtotal':sub_p, 'fee':0, 'tax_name':"IVA", 'tax_val':tax_p, 'total':tot_p}
+                             pdf_p = generar_pdf_final(EMPRESAS['Chile_Pruebas'], cli, prod_items, calc_p, idi_saved, ext)
+                             b64_p = base64.b64encode(pdf_p).decode('latin-1')
+                             sub_s = sum(x['Total'] for x in serv_items); tot_s = sub_s
+                             calc_s = {'subtotal':sub_s, 'fee':0, 'tax_name':"", 'tax_val':0, 'total':tot_s}
+                             pdf_s = generar_pdf_final(EMPRESAS['Chile_Servicios'], cli, serv_items, calc_s, idi_saved, ext)
+                             b64_s = base64.b64encode(pdf_s).decode('latin-1')
+                             pdf_links = f'<a href="data:application/pdf;base64,{b64_p}" download="Cot_{r["id"]}_P.pdf">📄 Ver PDF SpA ({idi_saved})</a> | <a href="data:application/pdf;base64,{b64_s}" download="Cot_{r["id"]}_S.pdf">📄 Ver PDF Ltda ({idi_saved})</a>'
+                        else:
+                             ent = get_empresa(r['pais'], r['items']); sub = sum(x['Total'] for x in r['items']); tn, tv = get_impuestos(r['pais'], sub, sub); calc = {'subtotal':sub, 'fee':0, 'tax_name':tn, 'tax_val':tv, 'total':r['total']}
+                             pdf = generar_pdf_final(ent, cli, r['items'], calc, idi_saved, ext)
+                             b64 = base64.b64encode(pdf).decode('latin-1')
+                             pdf_links = f'<a href="data:application/pdf;base64,{b64}" download="Cot_{r["id"]}.pdf">📄 Ver PDF Cotización ({idi_saved})</a>'
+                        st.markdown(pdf_links, unsafe_allow_html=True)
+                    else: st.warning("⚠️ PDF no disponible.")
+                    c1, c2, c3, c4 = st.columns(4)
+                    new_oc = c1.text_input("OC", value=r.get('oc',''), key=f"oc_{r['id']}")
+                    new_hes_num = c2.text_input("N° HES", value=r.get('hes_num',''), key=f"hnum_{r['id']}")
+                    new_inv = c3.text_input("N° Factura", key=f"inv_{r['id']}")
+                    if c4.button("Emitir", key=f"bill_{r['id']}"):
+                        if not new_inv: st.error("Falta N° Factura"); continue
+                        st.session_state['cotizaciones'].at[i, 'oc'] = new_oc
+                        st.session_state['cotizaciones'].at[i, 'hes_num'] = new_hes_num
+                        st.session_state['cotizaciones'].at[i, 'factura'] = new_inv
+                        st.session_state['cotizaciones'].at[i, 'estado'] = 'Facturada'
+                        if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
+                            st.success(f"Factura {new_inv} guardada!"); time.sleep(1); st.rerun()
+                    st.divider()
+    with tab_collection:
+        st.subheader("Historial y Cobranza")
+        billed = df[df['estado'] == 'Facturada'].copy()
+        if billed.empty: st.info("No hay historial.")
+        else:
+            st.dataframe(billed[['fecha', 'id', 'empresa', 'total', 'moneda', 'oc', 'hes_num', 'factura', 'pago']], use_container_width=True)
+            st.markdown("---"); st.subheader("🔧 Gestión de Factura")
+            inv_list = billed['factura'].unique().tolist()
+            sel_inv = st.selectbox("Seleccionar N° Factura", inv_list)
+            if sel_inv:
+                row_idx = df[df['factura'] == sel_inv].index[0]
+                r_sel = st.session_state['cotizaciones'].iloc[row_idx]
+                t1, t2, t3 = st.tabs(["💰 Actualizar Pago", "✏️ Corregir Datos", "🚫 Anular Factura"])
+                with t1:
+                    curr_pay = r_sel['pago']
+                    c1, c2 = st.columns([2,1])
+                    new_p = c1.selectbox("Estado Pago", ["Pendiente", "Pagada", "Vencida"], index=["Pendiente", "Pagada", "Vencida"].index(curr_pay))
+                    if c2.button("Actualizar Pago"):
+                        st.session_state['cotizaciones'].at[row_idx, 'pago'] = new_p
+                        github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha'))
+                        st.success("Pago actualizado"); time.sleep(0.5); st.rerun()
+                with t2:
+                    st.info("Edita datos si hubo un error de tipeo.")
+                    e_oc = st.text_input("Corregir OC", value=r_sel['oc'])
+                    e_hes = st.text_input("Corregir HES", value=r_sel['hes_num'])
+                    e_inv = st.text_input("Corregir N° Factura", value=r_sel['factura'])
+                    if st.button("Guardar Correcciones"):
+                        st.session_state['cotizaciones'].at[row_idx, 'oc'] = e_oc
+                        st.session_state['cotizaciones'].at[row_idx, 'hes_num'] = e_hes
+                        st.session_state['cotizaciones'].at[row_idx, 'factura'] = e_inv
+                        if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
+                            st.success("Datos corregidos"); time.sleep(1); st.rerun()
+                with t3:
+                    st.error("⚠️ CUIDADO: Esto eliminará la factura y devolverá la cotización a la pestaña 'Por Facturar'.")
+                    if st.button("🗑️ Eliminar Factura (Revertir a Backlog)"):
+                        st.session_state['cotizaciones'].at[row_idx, 'estado'] = 'Aprobada'
+                        st.session_state['cotizaciones'].at[row_idx, 'factura'] = ''
+                        st.session_state['cotizaciones'].at[row_idx, 'pago'] = 'Pendiente'
+                        if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
+                            st.success("Factura eliminada."); time.sleep(1); st.rerun()
+
 def convert_to_usd(row):
     m = row['moneda']; v = row['total']
     if m == 'US$': return v

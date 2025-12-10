@@ -138,7 +138,6 @@ def login_page():
     with c2:
         st.markdown("<br><br>", unsafe_allow_html=True)
         if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=300)
-        # --- CAMBIO REALIZADO AQUÍ ---
         st.markdown("### Acceso Seguro CRM TalentPRO")
         with st.form("login_form"):
             u = st.text_input("Usuario", key="login_user")
@@ -202,7 +201,7 @@ TEXTOS = {
         "client": "Cliente", "sec_prod": "Assessments", "sec_serv": "Servicios",
         "desc": "Descripción", "qty": "Cant", "unit": "Unitario", "total": "Total",
         "subtotal": "Subtotal", "fee": "Fee Admin", "discount": "Descuento", "bank": "Bank Fee",
-        "legal_intl": "Facturación a {pais}. +Impuestos retenidos +Gastos OUR.",
+        "legal_intl": "Facturación a {pais}. +Impostos retenidos +Gastos OUR.",
         "noshow_title": "Política No-Show:", "noshow_text": "Multa 50% inasistencia <24h.",
         "validity": "Validez 30 días"
     },
@@ -411,9 +410,21 @@ def modulo_crm():
     with tab_import:
         st.subheader("Carga Masiva de Leads / Clientes (CSV)")
         st.markdown("##### 1. Descargar Plantilla")
-        df_tem_lead = pd.DataFrame([{"Cliente":"Empresa ABC","Pais":"Chile","Industria":"Tecnología","Contacto":"Juan","Email":"juan@abc.com","Origen":"Prospección del Usuario","Etapa":"Prospección"}])
+        df_tem_lead = pd.DataFrame([{
+            "Cliente":"Empresa ABC",
+            "Area": "Cono Sur", 
+            "Pais":"Chile",
+            "Industria":"Tecnología",
+            "Web": "www.empresa.com",
+            "Contacto":"Juan Perez",
+            "Email":"juan@abc.com",
+            "Telefono": "+56912345678",
+            "Origen":"Prospección del Usuario",
+            "Etapa":"Prospección",
+            "Expectativa": "Buscan evaluaciones psicométricas"
+        }])
         csv_lead = df_tem_lead.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Descargar Plantilla Leads CSV", data=csv_lead, file_name="plantilla_leads.csv", mime="text/csv")
+        st.download_button("📥 Descargar Plantilla Leads CSV", data=csv_lead, file_name="plantilla_leads_completa.csv", mime="text/csv")
         st.markdown("##### 2. Subir Archivo")
         uploaded_file = st.file_uploader("Subir CSV de Leads", type=["csv"])
         if uploaded_file is not None:
@@ -423,17 +434,21 @@ def modulo_crm():
                 if st.button("Procesar Importación"):
                     new_entries = []
                     for _, row in df_up.iterrows():
+                        contact_str = f"{row.get('Contacto','')} ({row.get('Email','')})"
+                        if 'Telefono' in row and str(row['Telefono']) != 'nan':
+                            contact_str += f" - Tel: {row['Telefono']}"
+
                         new_entries.append({
                             "id": int(time.time()) + random.randint(1, 1000),
                             "Cliente": row.get('Cliente', 'Sin Nombre'),
-                            "Area": "Importado",
+                            "Area": row.get('Area', 'Importado'),
                             "Pais": row.get('Pais', 'Desconocido'),
                             "Industria": row.get('Industria', 'Otros'),
-                            "Web": "",
-                            "Contactos": f"{row.get('Contacto','')} ({row.get('Email','')})",
+                            "Web": str(row.get('Web', '')),
+                            "Contactos": contact_str,
                             "Origen": row.get('Origen', 'Importación'),
                             "Etapa": row.get('Etapa', 'Prospección'),
-                            "Expectativa": "Importación Masiva",
+                            "Expectativa": row.get('Expectativa', 'Importación Masiva'),
                             "Responsable": st.session_state['current_user'],
                             "Fecha": str(datetime.now().date())
                         })

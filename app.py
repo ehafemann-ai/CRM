@@ -396,8 +396,8 @@ def modulo_crm():
                         st.markdown("##### 📝 Editar Información")
                         with st.form(f"edit_lead_{lead_idx}"):
                             e_contacts = st.text_area("Contactos", value=lead_data.get('Contactos', ''))
-                            e_etapa = st.selectbox("Etapa", ["Prospección", "Contacto", "Reunión", "Propuesta", "Cerrado Ganado", "Cerrado Perdido"], 
-                                                   index=["Prospección", "Contacto", "Reunión", "Propuesta", "Cerrado Ganado", "Cerrado Perdido"].index(lead_data.get('Etapa', 'Prospección')) if lead_data.get('Etapa') in ["Prospección", "Contacto", "Reunión", "Propuesta", "Cerrado Ganado", "Cerrado Perdido"] else 0)
+                            e_etapa = st.selectbox("Etapa", ["Prospección", "Contacto", "Reunión", "Propuesta", "Cerrado Ganado", "Cerrado Perdido", "Cliente Activo"], 
+                                                   index=["Prospección", "Contacto", "Reunión", "Propuesta", "Cerrado Ganado", "Cerrado Perdido", "Cliente Activo"].index(lead_data.get('Etapa', 'Prospección')) if lead_data.get('Etapa') in ["Prospección", "Contacto", "Reunión", "Propuesta", "Cerrado Ganado", "Cerrado Perdido", "Cliente Activo"] else 0)
                             e_expectativa = st.text_area("Expectativa / Dolor", value=lead_data.get('Expectativa', ''))
                             e_web = st.text_input("Web", value=lead_data.get('Web', ''))
                             
@@ -478,10 +478,16 @@ def modulo_crm():
                          if github_push_json('url_leads', new_db_ex, st.session_state.get('leads_sha')):
                              st.session_state['leads_db'] = new_db_ex; st.success(f"Cliente {e_name} agregado a la cartera."); time.sleep(1); st.rerun()
                      else: st.error("Falta el nombre de la empresa")
-        l_leads = [l['Cliente'] for l in st.session_state['leads_db']]
-        l_cots = st.session_state['cotizaciones']['empresa'].unique().tolist()
-        todos = sorted(list(set(l_leads + l_cots)))
-        sel = st.selectbox("Ver Cliente 360", [""] + todos)
+        
+        # --- FILTRO CLIENTES ---
+        leads_db = st.session_state['leads_db']
+        clients_from_db = [l['Cliente'] for l in leads_db if l.get('Etapa') in ['Cliente Activo', 'Cerrado Ganado'] or l.get('Area') == 'Cartera']
+        df_cots = st.session_state['cotizaciones']
+        clients_with_sales = df_cots[df_cots['estado'].isin(['Aprobada', 'Facturada'])]['empresa'].unique().tolist()
+        real_clients_list = sorted(list(set(clients_from_db + clients_with_sales)))
+        
+        sel = st.selectbox("Ver Cliente 360 (Solo Clientes)", [""] + real_clients_list)
+        
         if sel:
             df = st.session_state['cotizaciones']; dfc = df[df['empresa']==sel]
             tot = dfc['total'].sum() if not dfc.empty else 0
@@ -519,7 +525,6 @@ def modulo_crm():
         uploaded_file = st.file_uploader("Subir CSV de Leads", type=["csv"])
         if uploaded_file is not None:
             try:
-                # --- CORRECCIÓN ROBUSTA: Separadores y Codificación ---
                 try:
                     df_up = pd.read_csv(uploaded_file, sep=None, engine='python')
                 except Exception:
@@ -1165,68 +1170,6 @@ def modulo_admin():
             else: st.error("Hubo un error al intentar borrar algunos datos.")
     
     with tab_import:
-        st.subheader("Carga Masiva de Leads / Clientes (CSV)")
-        st.markdown("##### 1. Descargar Plantilla")
-        df_tem_lead = pd.DataFrame([{
-            "Cliente":"Empresa ABC",
-            "Area": "Cono Sur", 
-            "Pais":"Chile",
-            "Industria":"Tecnología",
-            "Web": "www.empresa.com",
-            "Contacto":"Juan Perez",
-            "Email":"juan@abc.com",
-            "Telefono": "+56912345678",
-            "Origen":"Prospección del Usuario",
-            "Etapa":"Prospección",
-            "Expectativa": "Buscan evaluaciones psicométricas"
-        }])
-        csv_lead = df_tem_lead.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Descargar Plantilla Leads CSV", data=csv_lead, file_name="plantilla_leads_completa.csv", mime="text/csv")
-        st.markdown("##### 2. Subir Archivo")
-        uploaded_file = st.file_uploader("Subir CSV de Leads", type=["csv"])
-        if uploaded_file is not None:
-            try:
-                # --- CORRECCIÓN ROBUSTA: Separadores y Codificación ---
-                try:
-                    df_up = pd.read_csv(uploaded_file, sep=None, engine='python')
-                except Exception:
-                    uploaded_file.seek(0)
-                    try:
-                        df_up = pd.read_csv(uploaded_file, sep=None, engine='python', encoding='latin-1')
-                    except Exception:
-                        uploaded_file.seek(0)
-                        df_up = pd.read_csv(uploaded_file, sep=';', encoding='latin-1')
-                
-                st.write("Vista Previa:", df_up.head())
-                if st.button("Procesar Importación"):
-                    new_entries = []
-                    for _, row in df_up.iterrows():
-                        contact_str = f"{row.get('Contacto','')} ({row.get('Email','')})"
-                        if 'Telefono' in row and str(row['Telefono']) != 'nan':
-                            contact_str += f" - Tel: {row['Telefono']}"
-
-                        new_entries.append({
-                            "id": int(time.time()) + random.randint(1, 1000),
-                            "Cliente": row.get('Cliente', 'Sin Nombre'),
-                            "Area": row.get('Area', 'Importado'),
-                            "Pais": row.get('Pais', 'Desconocido'),
-                            "Industria": row.get('Industria', 'Otros'),
-                            "Web": str(row.get('Web', '')),
-                            "Contactos": contact_str,
-                            "Origen": row.get('Origen', 'Importación'),
-                            "Etapa": row.get('Etapa', 'Prospección'),
-                            "Expectativa": row.get('Expectativa', 'Importación Masiva'),
-                            "Responsable": st.session_state['current_user'],
-                            "Fecha": str(datetime.now().date())
-                        })
-                    final_db = st.session_state['leads_db'] + new_entries
-                    if github_push_json('url_leads', final_db, st.session_state.get('leads_sha')):
-                        st.session_state['leads_db'] = final_db
-                        st.success(f"Se importaron {len(new_entries)} registros correctamente."); time.sleep(1); st.rerun()
-                    else: st.error("Error al guardar en GitHub")
-            except Exception as e: st.error(f"Error al leer el archivo: {e}")
-
-    with tab_import:
         st.subheader("Importar Usuarios y Estructura (CSV)")
         st.markdown("##### 1. Descargar Plantilla")
         df_tem_user = pd.DataFrame([{"email":"usuario@talentpro.com","nombre":"Nombre Apellido","rol":"Comercial","equipo":"Cono Sur","password_inicial":"Talent2025"}])
@@ -1236,7 +1179,6 @@ def modulo_admin():
         up_users = st.file_uploader("Cargar CSV de Usuarios", type=["csv"])
         if up_users:
             try:
-                # --- CORRECCIÓN ROBUSTA: Separadores y Codificación ---
                 try:
                     df_u = pd.read_csv(up_users, sep=None, engine='python')
                 except Exception:

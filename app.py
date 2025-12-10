@@ -639,8 +639,60 @@ def modulo_cotizador():
         c1,c2,c3,c4 = st.columns([3,1,1,1]); lp = ctx['dp']['Producto'].unique().tolist() if not ctx['dp'].empty else []
         if lp:
             sp=c1.selectbox("Item",lp,key="p1"); qp=c2.number_input("Cant",1,10000,10,key="q1")
-            up=calc_xls(ctx['dp'],sp,qp,ctx['tipo']=='Loc'); c3.metric("Unit",f"{up:,.2f}")
-            if c4.button("Add",key="b1"): st.session_state['carrito'].append({"Ítem":"Evaluación","Desc":sp,"Det":f"x{qp}","Moneda":ctx['mon'],"Unit":up,"Total":up*qp}); st.rerun()
+            
+            # --- MODIFICACIÓN: CÁLCULO DE PRECIO POR VOLUMEN ACUMULADO ---
+            # 1. Calcular cuántas evaluaciones hay YA en el carrito
+            cant_actual_carrito = 0
+            for item in st.session_state['carrito']:
+                if item['Ítem'] == 'Evaluación':
+                    try:
+                        # Parseamos la cantidad desde el string "x500" o similar
+                        q_str = str(item['Det']).replace('x', '').strip().split('(')[0]
+                        cant_actual_carrito += int(q_str)
+                    except: pass
+            
+            # 2. El volumen total para calcular el precio es (lo del carrito + lo nuevo)
+            volumen_total_calculo = cant_actual_carrito + qp
+            
+            # 3. Obtener precio unitario basado en ese volumen total
+            up = calc_xls(ctx['dp'], sp, volumen_total_calculo, ctx['tipo']=='Loc')
+            
+            c3.metric("Unit", f"{up:,.2f}")
+            if volumen_total_calculo != qp:
+                c3.caption(f"Precio por volumen total ({volumen_total_calculo})")
+            
+            if c4.button("Add", key="b1"): 
+                # Agregar el nuevo ítem
+                st.session_state['carrito'].append({
+                    "Ítem": "Evaluación", 
+                    "Desc": sp, 
+                    "Det": f"x{qp}", 
+                    "Moneda": ctx['mon'], 
+                    "Unit": up, 
+                    "Total": up*qp
+                })
+                
+                # --- MODIFICACIÓN: ACTUALIZAR PRECIOS DE ÍTEMS ANTERIORES ---
+                # Recorrer el carrito y actualizar el precio unitario de TODAS las evaluaciones
+                # basado en el nuevo volumen total alcanzado.
+                new_total_qty = cant_actual_carrito + qp
+                for i, item in enumerate(st.session_state['carrito']):
+                    if item['Ítem'] == 'Evaluación':
+                        try:
+                            prod_name = item['Desc']
+                            q_item_str = str(item['Det']).replace('x', '').strip().split('(')[0]
+                            q_item = int(q_item_str)
+                            
+                            # Recalcular precio unitario con el gran total
+                            new_up = calc_xls(ctx['dp'], prod_name, new_total_qty, ctx['tipo']=='Loc')
+                            
+                            # Actualizar en sesión
+                            st.session_state['carrito'][i]['Unit'] = new_up
+                            st.session_state['carrito'][i]['Total'] = new_up * q_item
+                        except: pass
+                
+                st.rerun()
+
     with ts:
         c1,c2,c3,c4=st.columns([3,2,1,1]); ls=ctx['ds']['Servicio'].unique().tolist() if not ctx['ds'].empty else []
         if ls:

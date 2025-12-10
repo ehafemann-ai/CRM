@@ -429,7 +429,13 @@ def modulo_crm():
         uploaded_file = st.file_uploader("Subir CSV de Leads", type=["csv"])
         if uploaded_file is not None:
             try:
-                df_up = pd.read_csv(uploaded_file)
+                # --- CORRECCIÓN: Manejo de codificación ---
+                try:
+                    df_up = pd.read_csv(uploaded_file)
+                except UnicodeDecodeError:
+                    uploaded_file.seek(0)
+                    df_up = pd.read_csv(uploaded_file, encoding='latin-1')
+                
                 st.write("Vista Previa:", df_up.head())
                 if st.button("Procesar Importación"):
                     new_entries = []
@@ -1074,7 +1080,13 @@ def modulo_admin():
         up_users = st.file_uploader("Cargar CSV de Usuarios", type=["csv"])
         if up_users:
             try:
-                df_u = pd.read_csv(up_users)
+                # --- CORRECCIÓN: Manejo de codificación también aquí por seguridad ---
+                try:
+                    df_u = pd.read_csv(up_users)
+                except UnicodeDecodeError:
+                    up_users.seek(0)
+                    df_u = pd.read_csv(up_users, encoding='latin-1')
+
                 st.write("Vista Previa:", df_u.head())
                 if st.button("Procesar Usuarios"):
                     cnt = 0

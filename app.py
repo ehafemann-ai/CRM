@@ -341,6 +341,7 @@ def modulo_crm():
     tab1, tab2, tab_import = st.tabs(["📋 Gestión de Leads", "🏢 Cartera Clientes", "📥 Importar Masivo"])
     
     with tab1:
+        # --- SECCIÓN CREAR LEAD ---
         with st.expander("➕ Nuevo Lead", expanded=False):
             with st.form("form_lead"):
                 st.subheader("1. Datos Generales")
@@ -369,8 +370,97 @@ def modulo_crm():
                     if github_push_json('url_leads', new_db, st.session_state.get('leads_sha')):
                         st.session_state['leads_db'] = new_db; st.success("Lead guardado correctamente."); time.sleep(1); st.rerun()
                     else: st.error("Error al guardar en GitHub")
-        if st.session_state['leads_db']: st.dataframe(pd.DataFrame(st.session_state['leads_db']), use_container_width=True)
-        else: st.info("No hay leads registrados.")
+        
+        # --- SECCIÓN GESTIONAR / EDITAR LEAD ---
+        st.divider()
+        st.subheader("🖊️ Gestionar / Editar Lead")
+        
+        leads_list = st.session_state['leads_db']
+        if not leads_list:
+            st.info("No hay leads registrados.")
+        else:
+            # Selector de Lead
+            lead_names = [l.get('Cliente', 'Sin Nombre') for l in leads_list]
+            sel_lead_name = st.selectbox("Seleccionar Lead para gestionar", [""] + sorted(list(set(lead_names))))
+            
+            if sel_lead_name:
+                # Buscar el lead seleccionado (usamos el primero que coincida por nombre)
+                lead_idx = next((i for i, d in enumerate(leads_list) if d["Cliente"] == sel_lead_name), None)
+                
+                if lead_idx is not None:
+                    lead_data = leads_list[lead_idx]
+                    
+                    col_edit, col_info = st.columns([1, 1])
+                    
+                    with col_edit:
+                        st.markdown("##### 📝 Editar Información")
+                        with st.form(f"edit_lead_{lead_idx}"):
+                            e_contacts = st.text_area("Contactos", value=lead_data.get('Contactos', ''))
+                            e_etapa = st.selectbox("Etapa", ["Prospección", "Contacto", "Reunión", "Propuesta", "Cerrado Ganado", "Cerrado Perdido"], 
+                                                   index=["Prospección", "Contacto", "Reunión", "Propuesta", "Cerrado Ganado", "Cerrado Perdido"].index(lead_data.get('Etapa', 'Prospección')) if lead_data.get('Etapa') in ["Prospección", "Contacto", "Reunión", "Propuesta", "Cerrado Ganado", "Cerrado Perdido"] else 0)
+                            e_expectativa = st.text_area("Expectativa / Dolor", value=lead_data.get('Expectativa', ''))
+                            e_web = st.text_input("Web", value=lead_data.get('Web', ''))
+                            
+                            if st.form_submit_button("💾 Guardar Cambios"):
+                                leads_list[lead_idx]['Contactos'] = e_contacts
+                                leads_list[lead_idx]['Etapa'] = e_etapa
+                                leads_list[lead_idx]['Expectativa'] = e_expectativa
+                                leads_list[lead_idx]['Web'] = e_web
+                                
+                                if github_push_json('url_leads', leads_list, st.session_state.get('leads_sha')):
+                                    st.session_state['leads_db'] = leads_list
+                                    st.success("Lead actualizado correctamente."); time.sleep(1); st.rerun()
+                                else:
+                                    st.error("Error al actualizar en GitHub")
+
+                    with col_info:
+                        st.markdown(f"##### 📂 Historial de {sel_lead_name}")
+                        
+                        # 1. Mostrar Cotizaciones asociadas
+                        df_cots = st.session_state['cotizaciones']
+                        cots_lead = df_cots[df_cots['empresa'] == sel_lead_name]
+                        
+                        if not cots_lead.empty:
+                            st.caption("Cotizaciones Realizadas:")
+                            st.dataframe(cots_lead[['fecha', 'id', 'total', 'estado', 'vendedor']], use_container_width=True, hide_index=True)
+                        else:
+                            st.info("No hay cotizaciones asociadas a este cliente.")
+                            
+                        st.divider()
+                        
+                        # 2. Subir Propuesta PDF
+                        st.markdown("##### 📎 Propuesta Comercial")
+                        
+                        # Mostrar botón de descarga si ya existe archivo
+                        if 'propuesta_file' in lead_data and lead_data['propuesta_file']:
+                            try:
+                                b64_file = lead_data['propuesta_file']
+                                bin_file = base64.b64decode(b64_file)
+                                st.download_button(label="📥 Descargar Propuesta Actual", data=bin_file, file_name=f"Propuesta_{sel_lead_name}.pdf", mime="application/pdf")
+                            except:
+                                st.error("Error al leer el archivo guardado.")
+
+                        # Subir nuevo archivo
+                        uploaded_propuesta = st.file_uploader("Subir/Actualizar PDF Propuesta", type=['pdf'], key=f"up_{lead_idx}")
+                        if uploaded_propuesta is not None:
+                            if st.button("Guardar Archivo"):
+                                try:
+                                    bytes_data = uploaded_propuesta.read()
+                                    b64_str = base64.b64encode(bytes_data).decode()
+                                    leads_list[lead_idx]['propuesta_file'] = b64_str
+                                    
+                                    if github_push_json('url_leads', leads_list, st.session_state.get('leads_sha')):
+                                        st.session_state['leads_db'] = leads_list
+                                        st.success("Propuesta subida exitosamente."); time.sleep(1); st.rerun()
+                                    else:
+                                        st.error("Error al guardar archivo.")
+                                except Exception as e:
+                                    st.error(f"Error procesando archivo: {e}")
+
+            st.divider()
+            st.caption("Lista completa de Leads:")
+            st.dataframe(pd.DataFrame(st.session_state['leads_db']), use_container_width=True)
+
     with tab2:
         with st.expander("➕ Registrar Cliente Existente / Histórico", expanded=False):
              with st.form("form_existing_client"):
@@ -431,15 +521,12 @@ def modulo_crm():
             try:
                 # --- CORRECCIÓN ROBUSTA: Separadores y Codificación ---
                 try:
-                    # Intento 1: Auto-detección de separador (engine='python') + UTF-8
                     df_up = pd.read_csv(uploaded_file, sep=None, engine='python')
                 except Exception:
                     uploaded_file.seek(0)
                     try:
-                         # Intento 2: Auto-detección + Latin-1
-                         df_up = pd.read_csv(uploaded_file, sep=None, engine='python', encoding='latin-1')
+                        df_up = pd.read_csv(uploaded_file, sep=None, engine='python', encoding='latin-1')
                     except Exception:
-                        # Intento 3: Fallback manual a punto y coma
                         uploaded_file.seek(0)
                         df_up = pd.read_csv(uploaded_file, sep=';', encoding='latin-1')
                 
@@ -1077,6 +1164,68 @@ def modulo_admin():
             if success: st.balloons(); time.sleep(2); st.rerun()
             else: st.error("Hubo un error al intentar borrar algunos datos.")
     
+    with tab_import:
+        st.subheader("Carga Masiva de Leads / Clientes (CSV)")
+        st.markdown("##### 1. Descargar Plantilla")
+        df_tem_lead = pd.DataFrame([{
+            "Cliente":"Empresa ABC",
+            "Area": "Cono Sur", 
+            "Pais":"Chile",
+            "Industria":"Tecnología",
+            "Web": "www.empresa.com",
+            "Contacto":"Juan Perez",
+            "Email":"juan@abc.com",
+            "Telefono": "+56912345678",
+            "Origen":"Prospección del Usuario",
+            "Etapa":"Prospección",
+            "Expectativa": "Buscan evaluaciones psicométricas"
+        }])
+        csv_lead = df_tem_lead.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Descargar Plantilla Leads CSV", data=csv_lead, file_name="plantilla_leads_completa.csv", mime="text/csv")
+        st.markdown("##### 2. Subir Archivo")
+        uploaded_file = st.file_uploader("Subir CSV de Leads", type=["csv"])
+        if uploaded_file is not None:
+            try:
+                # --- CORRECCIÓN ROBUSTA: Separadores y Codificación ---
+                try:
+                    df_up = pd.read_csv(uploaded_file, sep=None, engine='python')
+                except Exception:
+                    uploaded_file.seek(0)
+                    try:
+                        df_up = pd.read_csv(uploaded_file, sep=None, engine='python', encoding='latin-1')
+                    except Exception:
+                        uploaded_file.seek(0)
+                        df_up = pd.read_csv(uploaded_file, sep=';', encoding='latin-1')
+                
+                st.write("Vista Previa:", df_up.head())
+                if st.button("Procesar Importación"):
+                    new_entries = []
+                    for _, row in df_up.iterrows():
+                        contact_str = f"{row.get('Contacto','')} ({row.get('Email','')})"
+                        if 'Telefono' in row and str(row['Telefono']) != 'nan':
+                            contact_str += f" - Tel: {row['Telefono']}"
+
+                        new_entries.append({
+                            "id": int(time.time()) + random.randint(1, 1000),
+                            "Cliente": row.get('Cliente', 'Sin Nombre'),
+                            "Area": row.get('Area', 'Importado'),
+                            "Pais": row.get('Pais', 'Desconocido'),
+                            "Industria": row.get('Industria', 'Otros'),
+                            "Web": str(row.get('Web', '')),
+                            "Contactos": contact_str,
+                            "Origen": row.get('Origen', 'Importación'),
+                            "Etapa": row.get('Etapa', 'Prospección'),
+                            "Expectativa": row.get('Expectativa', 'Importación Masiva'),
+                            "Responsable": st.session_state['current_user'],
+                            "Fecha": str(datetime.now().date())
+                        })
+                    final_db = st.session_state['leads_db'] + new_entries
+                    if github_push_json('url_leads', final_db, st.session_state.get('leads_sha')):
+                        st.session_state['leads_db'] = final_db
+                        st.success(f"Se importaron {len(new_entries)} registros correctamente."); time.sleep(1); st.rerun()
+                    else: st.error("Error al guardar en GitHub")
+            except Exception as e: st.error(f"Error al leer el archivo: {e}")
+
     with tab_import:
         st.subheader("Importar Usuarios y Estructura (CSV)")
         st.markdown("##### 1. Descargar Plantilla")

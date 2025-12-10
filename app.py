@@ -719,8 +719,8 @@ def modulo_cotizador():
             # --- MODIFICACIÓN: Lógica de Descuento Avanzada ---
             st.markdown("##### Descuento")
             dsc_name = st.text_input("Glosa Descuento", value="Descuento")
-            # Selector de tipo de descuento
-            tipo_desc = st.selectbox("Tipo de Descuento", ["Monto Fijo ($)", "Porcentaje (%)", "Por Tramo"], key="sel_tipo_desc")
+            # Selector de tipo de descuento actualizado
+            tipo_desc = st.selectbox("Tipo de Descuento", ["Monto Fijo ($)", "Porcentaje (%)", "Simular Volumen (Precio por Tramo)"], key="sel_tipo_desc")
             
             dsc = 0.0
             if tipo_desc == "Monto Fijo ($)":
@@ -729,17 +729,33 @@ def modulo_cotizador():
                 pct_val = st.number_input("Porcentaje %", 0.0, 100.0, 0.0, step=1.0, key="in_pct_desc")
                 dsc = sub * (pct_val / 100)
                 st.caption(f"Desc: {ctx['mon']} {dsc:,.2f}")
-            else: # Por Tramo
-                opciones_tramos = {
-                    "Tramo 1 (5%)": 0.05,
-                    "Tramo 2 (10%)": 0.10,
-                    "Tramo 3 (15%)": 0.15,
-                    "Tramo 4 (20%)": 0.20,
-                    "Tramo VIP (25%)": 0.25
-                }
-                sel_tramo = st.selectbox("Seleccione Tramo", list(opciones_tramos.keys()), key="sel_tramo_val")
-                dsc = sub * opciones_tramos[sel_tramo]
-                st.caption(f"Desc: {ctx['mon']} {dsc:,.2f}")
+            else: # Simular Volumen (Precio por Tramo)
+                st.caption("Aplica el precio unitario correspondiente a un volumen mayor.")
+                vol_sim = st.number_input("Volumen a Simular (Cant. Total)", min_value=1, value=1000, step=10, key="in_vol_sim")
+                
+                # Calcular el descuento comparando el precio real vs el precio simulado
+                total_simulado = 0.0
+                total_actual_evals = 0.0
+                
+                for item in st.session_state['carrito']:
+                    if item['Ítem'] == 'Evaluación':
+                        try:
+                            # Obtener cantidad del ítem
+                            q_str = str(item['Det']).replace('x', '').strip().split('(')[0]
+                            qty = int(q_str)
+                            
+                            # Precio unitario al volumen simulado
+                            unit_sim = calc_xls(ctx['dp'], item['Desc'], vol_sim, ctx['tipo']=='Loc')
+                            
+                            total_simulado += unit_sim * qty
+                            total_actual_evals += item['Total']
+                        except: pass
+                
+                # El descuento es la diferencia entre lo que vale ahora y lo que valdría con el precio simulado
+                diff = total_actual_evals - total_simulado
+                dsc = diff if diff > 0 else 0.0
+                
+                st.caption(f"Ahorro por volumen: {ctx['mon']} {dsc:,.2f}")
             # --------------------------------------------------
 
             vfee=eva*0.10 if fee else 0; tn,tv=get_impuestos(ps,sub,eva); fin=sub+vfee+tv+bnk-dsc
@@ -845,6 +861,7 @@ def modulo_seguimiento():
                 st.session_state['cotizaciones'].at[i, 'estado'] = new_status
                 st.session_state['cotizaciones'].at[i, 'hes'] = hes_check
                 if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
+                    if new_status == 'Aprobada': st.balloons() # --- MODIFICACIÓN: GLOBOS AL APROBAR ---
                     st.success("Actualizado"); time.sleep(1); st.rerun()
 
 def modulo_finanzas():

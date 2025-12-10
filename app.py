@@ -429,12 +429,19 @@ def modulo_crm():
         uploaded_file = st.file_uploader("Subir CSV de Leads", type=["csv"])
         if uploaded_file is not None:
             try:
-                # --- CORRECCIÓN: Manejo de codificación ---
+                # --- CORRECCIÓN ROBUSTA: Separadores y Codificación ---
                 try:
-                    df_up = pd.read_csv(uploaded_file)
-                except UnicodeDecodeError:
+                    # Intento 1: Auto-detección de separador (engine='python') + UTF-8
+                    df_up = pd.read_csv(uploaded_file, sep=None, engine='python')
+                except Exception:
                     uploaded_file.seek(0)
-                    df_up = pd.read_csv(uploaded_file, encoding='latin-1')
+                    try:
+                         # Intento 2: Auto-detección + Latin-1
+                         df_up = pd.read_csv(uploaded_file, sep=None, engine='python', encoding='latin-1')
+                    except Exception:
+                        # Intento 3: Fallback manual a punto y coma
+                        uploaded_file.seek(0)
+                        df_up = pd.read_csv(uploaded_file, sep=';', encoding='latin-1')
                 
                 st.write("Vista Previa:", df_up.head())
                 if st.button("Procesar Importación"):
@@ -1080,12 +1087,16 @@ def modulo_admin():
         up_users = st.file_uploader("Cargar CSV de Usuarios", type=["csv"])
         if up_users:
             try:
-                # --- CORRECCIÓN: Manejo de codificación también aquí por seguridad ---
+                # --- CORRECCIÓN ROBUSTA: Separadores y Codificación ---
                 try:
-                    df_u = pd.read_csv(up_users)
-                except UnicodeDecodeError:
+                    df_u = pd.read_csv(up_users, sep=None, engine='python')
+                except Exception:
                     up_users.seek(0)
-                    df_u = pd.read_csv(up_users, encoding='latin-1')
+                    try:
+                        df_u = pd.read_csv(up_users, sep=None, engine='python', encoding='latin-1')
+                    except Exception:
+                        up_users.seek(0)
+                        df_u = pd.read_csv(up_users, sep=';', encoding='latin-1')
 
                 st.write("Vista Previa:", df_u.head())
                 if st.button("Procesar Usuarios"):

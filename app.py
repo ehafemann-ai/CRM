@@ -111,7 +111,7 @@ if 'leads_db' not in st.session_state:
 if 'cotizaciones' not in st.session_state:
     cots, sha_c = github_get_json('url_cotizaciones')
     st.session_state['cotizaciones_sha'] = sha_c
-    cols = ['id', 'fecha', 'empresa', 'pais', 'total', 'moneda', 'estado', 'vendedor', 'oc', 'factura', 'pago', 'hes', 'hes_num', 'items', 'pdf_data', 'idioma', 'equipo_asignado']
+    cols = ['id', 'fecha', 'empresa', 'pais', 'total', 'moneda', 'estado', 'vendedor', 'oc', 'factura', 'pago', 'hes', 'hes_num', 'items', 'pdf_data', 'idioma', 'equipo_asignado', 'factura_file']
     if cots and isinstance(cots, list):
         df = pd.DataFrame(cots)
         for c in cols:
@@ -343,6 +343,37 @@ def generar_pdf_final(emp, cli, items, calc, idioma_code, extras):
         pdf.set_font("Arial",'B',8); pdf.cell(0,4,T['noshow_title'],0,1); pdf.set_font("Arial",'',8); pdf.multi_cell(0,4,T['noshow_text'],0,'L'); pdf.ln(3)
     pdf.set_text_color(100); pdf.cell(0,5,T['validity'],0,1)
     return pdf.output(dest='S').encode('latin-1')
+
+# --- FUNCIÓN ANIMACIÓN LLUVIA DE DÓLARES ---
+def lluvia_dolares():
+    # Inyectamos CSS para la animación
+    st.markdown("""
+        <style>
+        @keyframes fall {
+            0% { transform: translateY(-10vh); opacity: 1; }
+            100% { transform: translateY(110vh); opacity: 0; }
+        }
+        .money-rain {
+            position: fixed;
+            top: 0;
+            font-size: 2.5rem;
+            animation: fall linear forwards;
+            z-index: 99999;
+            pointer-events: none;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
+    # Generamos HTML con posiciones aleatorias
+    html_content = ""
+    for i in range(40): # 40 billetes cayendo
+        left = random.randint(0, 100)
+        delay = random.uniform(0, 2)
+        duration = random.uniform(2, 4)
+        html_content += f'<div class="money-rain" style="left:{left}%; animation-delay:{delay}s; animation-duration:{duration}s;">💲</div>'
+    
+    st.markdown(html_content, unsafe_allow_html=True)
+
 
 # ==============================================================================
 # 7. MÓDULOS APP
@@ -864,7 +895,7 @@ def modulo_cotizador():
                 st.markdown(links_html, unsafe_allow_html=True)
                 
                 # Guardar Dataframe
-                row_data = {'id':nid, 'fecha':str(datetime.now().date()), 'empresa':emp, 'pais':ps, 'total':fin, 'moneda':ctx['mon'], 'estado':'Enviada', 'vendedor':ven, 'equipo_asignado': sel_team_cot, 'oc':'', 'factura':'', 'pago':'Pendiente', 'hes':False, 'hes_num':'', 'items': st.session_state['carrito'], 'pdf_data': ext, 'idioma': idi}
+                row_data = {'id':nid, 'fecha':str(datetime.now().date()), 'empresa':emp, 'pais':ps, 'total':fin, 'moneda':ctx['mon'], 'estado':'Enviada', 'vendedor':ven, 'equipo_asignado': sel_team_cot, 'oc':'', 'factura':'', 'pago':'Pendiente', 'hes':False, 'hes_num':'', 'items': st.session_state['carrito'], 'pdf_data': ext, 'idioma': idi, 'factura_file': None}
                 
                 df_cots = st.session_state['cotizaciones']
                 if es_update:
@@ -872,7 +903,8 @@ def modulo_cotizador():
                     idx = df_cots[df_cots['id'] == nid].index
                     if not idx.empty:
                         for k, v in row_data.items():
-                            df_cots.at[idx[0], k] = v
+                            if k != 'factura_file': # No sobrescribir factura si existe
+                                df_cots.at[idx[0], k] = v
                     else:
                         st.error("No se encontró el ID original para actualizar.")
                         return
@@ -969,17 +1001,28 @@ def modulo_finanzas():
     st.title("💰 Gestión Financiera")
     df = st.session_state['cotizaciones']
     if df.empty: st.info("No hay datos."); return
+    
+    # Aseguramos que exista la columna para el archivo de la factura
+    if 'factura_file' not in df.columns:
+        df['factura_file'] = None
+        st.session_state['cotizaciones'] = df
+
     tab_billing, tab_collection = st.tabs(["📝 Por Facturar (Backlog)", "💵 Historial Facturadas"])
+    
+    # --- PESTAÑA 1: POR FACTURAR ---
     with tab_billing:
         st.subheader("Pendientes de Facturación")
         to_bill = df[df['estado'] == 'Aprobada']
         if to_bill.empty: st.success("¡Excelente! No hay pendientes.")
         else:
             for i, r in to_bill.iterrows():
-                with st.container():
+                with st.container(border=True): # Usamos un borde para separar cada ítem
                     lang_tag = f"[{r.get('idioma','ES')}]"
                     st.markdown(f"**{lang_tag} {r['empresa']}** | ID: {r['id']} | Total: {r['moneda']} {r['total']:,.0f}")
+                    
                     if r.get('hes'): st.error("🚨 REQUISITO: Esta venta requiere N° HES o MIGO.")
+                    
+                    # Generación de Links PDF (Código original mantenido)
                     if r.get('items') and isinstance(r['items'], list):
                         cli = {'empresa':r['empresa'], 'contacto':'', 'email':''} 
                         ext = r.get('pdf_data', {'id':r['id'], 'pais':r['pais'], 'bank':0, 'desc':0})
@@ -1004,19 +1047,43 @@ def modulo_finanzas():
                              pdf_links = f'<a href="data:application/pdf;base64,{b64}" download="Cot_{r["id"]}.pdf">📄 Ver PDF Cotización ({idi_saved})</a>'
                         st.markdown(pdf_links, unsafe_allow_html=True)
                     else: st.warning("⚠️ PDF no disponible.")
+                    
+                    # --- NUEVA FUNCIONALIDAD: SUBIR FACTURA ---
+                    col_file, col_dummy = st.columns([1, 1])
+                    uploaded_invoice = col_file.file_uploader("📂 Subir PDF Factura Emitida", type=['pdf'], key=f"up_inv_{r['id']}")
+
+                    # Campos de input existentes
                     c1, c2, c3, c4 = st.columns(4)
                     new_oc = c1.text_input("OC", value=r.get('oc',''), key=f"oc_{r['id']}")
                     new_hes_num = c2.text_input("N° HES", value=r.get('hes_num',''), key=f"hnum_{r['id']}")
                     new_inv = c3.text_input("N° Factura", key=f"inv_{r['id']}")
-                    if c4.button("Emitir", key=f"bill_{r['id']}"):
-                        if not new_inv: st.error("Falta N° Factura"); continue
+                    
+                    if c4.button("Emitir Factura", key=f"bill_{r['id']}", type="primary"):
+                        if not new_inv: 
+                            st.error("Falta N° Factura")
+                            continue
+                        
+                        # Guardar datos básicos
                         st.session_state['cotizaciones'].at[i, 'oc'] = new_oc
                         st.session_state['cotizaciones'].at[i, 'hes_num'] = new_hes_num
                         st.session_state['cotizaciones'].at[i, 'factura'] = new_inv
                         st.session_state['cotizaciones'].at[i, 'estado'] = 'Facturada'
+                        
+                        # Guardar archivo PDF de factura si se subió
+                        if uploaded_invoice:
+                            try:
+                                inv_b64 = base64.b64encode(uploaded_invoice.read()).decode()
+                                st.session_state['cotizaciones'].at[i, 'factura_file'] = inv_b64
+                            except Exception as e:
+                                st.error(f"Error al procesar el archivo: {e}")
+
+                        # Sync Github
                         if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
-                            st.success(f"Factura {new_inv} guardada!"); time.sleep(1); st.rerun()
-                    st.divider()
+                            lluvia_dolares() # <--- EFECTO DE LLUVIA DE DÓLARES
+                            st.success(f"Factura {new_inv} emitida correctamente!"); 
+                            time.sleep(3); st.rerun()
+    
+    # --- PESTAÑA 2: HISTORIAL ---
     with tab_collection:
         st.subheader("Historial y Cobranza")
         billed = df[df['estado'] == 'Facturada'].copy()
@@ -1026,9 +1093,26 @@ def modulo_finanzas():
             st.markdown("---"); st.subheader("🔧 Gestión de Factura")
             inv_list = billed['factura'].unique().tolist()
             sel_inv = st.selectbox("Seleccionar N° Factura", inv_list)
+            
             if sel_inv:
+                # Obtenemos la fila correspondiente
                 row_idx = df[df['factura'] == sel_inv].index[0]
                 r_sel = st.session_state['cotizaciones'].iloc[row_idx]
+                
+                # Mostramos botón de descarga si existe archivo de factura
+                if 'factura_file' in r_sel and r_sel['factura_file']:
+                    try:
+                        b64_file = r_sel['factura_file']
+                        if b64_file: # Verificar que no sea None o vacio
+                            bin_file = base64.b64decode(b64_file)
+                            st.download_button(
+                                label=f"📥 Descargar Factura {sel_inv} (PDF)",
+                                data=bin_file,
+                                file_name=f"Factura_{sel_inv}.pdf",
+                                mime="application/pdf"
+                            )
+                    except: pass
+
                 t1, t2, t3 = st.tabs(["💰 Actualizar Pago", "✏️ Corregir Datos", "🚫 Anular Factura"])
                 with t1:
                     curr_pay = r_sel['pago']
@@ -1043,10 +1127,19 @@ def modulo_finanzas():
                     e_oc = st.text_input("Corregir OC", value=r_sel['oc'])
                     e_hes = st.text_input("Corregir HES", value=r_sel['hes_num'])
                     e_inv = st.text_input("Corregir N° Factura", value=r_sel['factura'])
+                    
+                    # Permite reemplazar el archivo si se equivocaron
+                    up_replace = st.file_uploader("Reemplazar PDF Factura (Opcional)", type=['pdf'], key="rep_pdf")
+
                     if st.button("Guardar Correcciones"):
                         st.session_state['cotizaciones'].at[row_idx, 'oc'] = e_oc
                         st.session_state['cotizaciones'].at[row_idx, 'hes_num'] = e_hes
                         st.session_state['cotizaciones'].at[row_idx, 'factura'] = e_inv
+                        
+                        if up_replace:
+                             b64_rep = base64.b64encode(up_replace.read()).decode()
+                             st.session_state['cotizaciones'].at[row_idx, 'factura_file'] = b64_rep
+
                         if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
                             st.success("Datos corregidos"); time.sleep(1); st.rerun()
                 with t3:
@@ -1055,6 +1148,9 @@ def modulo_finanzas():
                         st.session_state['cotizaciones'].at[row_idx, 'estado'] = 'Aprobada'
                         st.session_state['cotizaciones'].at[row_idx, 'factura'] = ''
                         st.session_state['cotizaciones'].at[row_idx, 'pago'] = 'Pendiente'
+                        # Limpiamos el archivo si se revierte
+                        st.session_state['cotizaciones'].at[row_idx, 'factura_file'] = None 
+                        
                         if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
                             st.success("Factura eliminada."); time.sleep(1); st.rerun()
 

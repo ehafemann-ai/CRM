@@ -111,6 +111,7 @@ if 'leads_db' not in st.session_state:
 if 'cotizaciones' not in st.session_state:
     cots, sha_c = github_get_json('url_cotizaciones')
     st.session_state['cotizaciones_sha'] = sha_c
+    # Aseguramos que existan todas las columnas, incluyendo la de archivo de factura
     cols = ['id', 'fecha', 'empresa', 'pais', 'total', 'moneda', 'estado', 'vendedor', 'oc', 'factura', 'pago', 'hes', 'hes_num', 'items', 'pdf_data', 'idioma', 'equipo_asignado', 'factura_file']
     if cots and isinstance(cots, list):
         df = pd.DataFrame(cots)
@@ -346,7 +347,6 @@ def generar_pdf_final(emp, cli, items, calc, idioma_code, extras):
 
 # --- FUNCIÓN ANIMACIÓN LLUVIA DE DÓLARES ---
 def lluvia_dolares():
-    # Inyectamos CSS para la animación
     st.markdown("""
         <style>
         @keyframes fall {
@@ -363,17 +363,13 @@ def lluvia_dolares():
         }
         </style>
     """, unsafe_allow_html=True)
-    
-    # Generamos HTML con posiciones aleatorias
     html_content = ""
-    for i in range(40): # 40 billetes cayendo
+    for i in range(40):
         left = random.randint(0, 100)
         delay = random.uniform(0, 2)
         duration = random.uniform(2, 4)
         html_content += f'<div class="money-rain" style="left:{left}%; animation-delay:{delay}s; animation-duration:{duration}s;">💲</div>'
-    
     st.markdown(html_content, unsafe_allow_html=True)
-
 
 # ==============================================================================
 # 7. MÓDULOS APP
@@ -1099,19 +1095,59 @@ def modulo_finanzas():
                 row_idx = df[df['factura'] == sel_inv].index[0]
                 r_sel = st.session_state['cotizaciones'].iloc[row_idx]
                 
-                # Mostramos botón de descarga si existe archivo de factura
-                if 'factura_file' in r_sel and r_sel['factura_file']:
-                    try:
-                        b64_file = r_sel['factura_file']
-                        if b64_file: # Verificar que no sea None o vacio
-                            bin_file = base64.b64decode(b64_file)
-                            st.download_button(
-                                label=f"📥 Descargar Factura {sel_inv} (PDF)",
-                                data=bin_file,
-                                file_name=f"Factura_{sel_inv}.pdf",
-                                mime="application/pdf"
-                            )
-                    except: pass
+                # --- ZONA DE DESCARGA DE DOCUMENTOS ---
+                st.markdown("##### 📂 Documentación Disponible")
+                col_d_inv, col_d_quote = st.columns(2)
+                
+                # 1. Descargar Factura (si existe)
+                with col_d_inv:
+                    if 'factura_file' in r_sel and r_sel['factura_file']:
+                        try:
+                            b64_file = r_sel['factura_file']
+                            if b64_file:
+                                bin_file = base64.b64decode(b64_file)
+                                st.download_button(
+                                    label=f"📥 Descargar Factura {sel_inv} (PDF)",
+                                    data=bin_file,
+                                    file_name=f"Factura_{sel_inv}.pdf",
+                                    mime="application/pdf",
+                                    use_container_width=True
+                                )
+                        except: st.error("Error al descargar factura.")
+                    else:
+                        st.warning("Sin archivo de factura adjunto.")
+
+                # 2. Descargar Cotización Original
+                with col_d_quote:
+                    if r_sel.get('items') and isinstance(r_sel['items'], list):
+                        try:
+                            cli_q = {'empresa':r_sel['empresa'], 'contacto':'', 'email':''} 
+                            ext_q = r_sel.get('pdf_data', {'id':r_sel['id'], 'pais':r_sel['pais'], 'bank':0, 'desc':0})
+                            idi_q = r_sel.get('idioma', 'ES')
+                            
+                            # Lógica para Chile (Separado) o General
+                            prod_items_q = [x for x in r_sel['items'] if x['Ítem']=='Evaluación']
+                            serv_items_q = [x for x in r_sel['items'] if x['Ítem']=='Servicio']
+
+                            if r_sel['pais'] == "Chile" and prod_items_q and serv_items_q:
+                                sub_p = sum(x['Total'] for x in prod_items_q); tax_p = sub_p*0.19; tot_p = sub_p*1.19
+                                calc_p = {'subtotal':sub_p, 'fee':0, 'tax_name':"IVA", 'tax_val':tax_p, 'total':tot_p}
+                                pdf_p = generar_pdf_final(EMPRESAS['Chile_Pruebas'], cli_q, prod_items_q, calc_p, idi_q, ext_q)
+                                
+                                sub_s = sum(x['Total'] for x in serv_items_q); tot_s = sub_s
+                                calc_s = {'subtotal':sub_s, 'fee':0, 'tax_name':"", 'tax_val':0, 'total':tot_s}
+                                pdf_s = generar_pdf_final(EMPRESAS['Chile_Servicios'], cli_q, serv_items_q, calc_s, idi_q, ext_q)
+                                
+                                col_q1, col_q2 = st.columns(2)
+                                col_q1.download_button("📄 Cot. Productos (SpA)", pdf_p, file_name=f"Cot_{r_sel['id']}_Prod.pdf", mime="application/pdf")
+                                col_q2.download_button("📄 Cot. Servicios (Ltda)", pdf_s, file_name=f"Cot_{r_sel['id']}_Serv.pdf", mime="application/pdf")
+                            else:
+                                ent_q = get_empresa(r_sel['pais'], r_sel['items']); sub_q = sum(x['Total'] for x in r_sel['items']); tn, tv = get_impuestos(r_sel['pais'], sub_q, sub_q); calc_q = {'subtotal':sub_q, 'fee':0, 'tax_name':tn, 'tax_val':tv, 'total':r_sel['total']}
+                                pdf_q = generar_pdf_final(ent_q, cli_q, r_sel['items'], calc_q, idi_q, ext_q)
+                                st.download_button("📄 Descargar Cotización Original", pdf_q, file_name=f"Cot_{r_sel['id']}.pdf", mime="application/pdf", use_container_width=True)
+                        except Exception as e: st.error(f"Error generando cotización: {e}")
+
+                st.markdown("---")
 
                 t1, t2, t3 = st.tabs(["💰 Actualizar Pago", "✏️ Corregir Datos", "🚫 Anular Factura"])
                 with t1:

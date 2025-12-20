@@ -238,11 +238,11 @@ TEXTOS = {
 }
 
 EMPRESAS = {
-    "Brasil": {"Nombre": "TalentPRO Brasil Ltda.", "ID": "CNPJ: 49.704.046/0001-80", "Dir": "Av. Marcos Penteado 939", "Giro": "Consultoria"},
-    "Peru": {"Nombre": "TALENTPRO S.A.C.", "ID": "DNI 25489763", "Dir": "AV. EL DERBY 254", "Giro": "Servicios"},
-    "Chile_Pruebas": {"Nombre": "TALENT PRO SPA", "ID": "RUT: 76.743.976-8", "Dir": "Juan de Valiente 3630", "Giro": "Selección"},
-    "Chile_Servicios": {"Nombre": "TALENTPRO SERVICIOS LTDA.", "ID": "RUT: 77.704.757-4", "Dir": "Juan de Valiente 3630", "Giro": "RRHH"},
-    "Latam": {"Nombre": "TALENTPRO LATAM, S.A.", "ID": "RUC: 155723672-2", "Dir": "CALLE 50, PANAMÁ", "Giro": "Talent Services"}
+    "Brasil": {"Nombre": "TalentPRO Brasil Ltda.", "ID": "CNPJ: 49.704.046/0001-80", "Dir": "Av. Marcos Penteado de Ulhoa Rodriguez 939 , Andar 8, Tamboré", "Giro": "Atividades de consultoria em gestão empresarial, exceto consultoria técnica específica"},
+    "Peru": {"Nombre": "TALENTPRO SOCIEDAD ANÓNIMA CERRADA", "ID": "RUC 20606246847", "Dir": "AVENIDA EL DERBY 254, SANTIAGO DE SURCO, LIMA, PERÚ", "Giro": "OTRAS ACTIVIDADES DE SERVICIOS DE APOYO A LAS EMPRESAS N.C.P"},
+    "Chile_Pruebas": {"Nombre": "TALENTPRO SPA", "ID": "RUT: 76.743.976-8", "Dir": "Juan de Valiente 3630, oficina 501, Vitacura, Santiago, Chile", "Giro": "Giro: Servicios de Reclutamiento y Selección de Personal"},
+    "Chile_Servicios": {"Nombre": "TALENTPRO SERVICIOS PROFESIONALES LTDA.", "ID": "RUT: 77.704.757-4", "Dir": "Juan de Valiente 3630, oficina 501, Vitacura, Santiago, Chile", "Giro": "Asesoría en Recursos Humanos"},
+    "Latam": {"Nombre": "TALENTPRO LATAM, S.A.", "ID": "RUC: 155723672-2-2022 DV 27", "Dir": "CALLE 50, PH GLOBAL PLAZA, OFICINA 6D ,BELLA VISTA, PANAMÁ", "Giro": "Talent Acquisition Services"}
 }
 
 # --- LÓGICA DE NEGOCIO ---

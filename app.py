@@ -227,7 +227,11 @@ def calc_paa(c, m):
 
 def calc_xls(df, p, c, l):
     if df.empty: return 0.0
-    r = df[df['Producto']==p]
+    # Limpiamos p para evitar fallos por espacios
+    p_clean = str(p).strip()
+    # Usamos comparación robusta (insensible a mayúsculas/espacios finales)
+    r = df[df['Producto'].str.strip() == p_clean]
+    
     if r.empty: return 0.0
     ts = [50,100,200,300,500,1000,'Infinito'] if l else [100,200,300,500,1000,'Infinito']
     for t in ts:
@@ -261,6 +265,7 @@ def get_user_teams_list(user_data):
     if isinstance(raw, str): return [raw] if raw and raw != "N/A" else []
     return raw
 
+# --- PDF ENGINE ---
 class PDF(FPDF):
     def header(self):
         if os.path.exists(LOGO_PATH): self.image(LOGO_PATH, 10, 10, 35)
@@ -288,8 +293,7 @@ def generar_pdf_final(emp, cli, items, calc, idioma_code, extras):
         pdf.set_x(x)
         pdf.set_font("Arial", 'B' if is_bold else '', 10)
         pdf.set_text_color(0 if not is_bold else 255)
-        if is_bold:
-            pdf.set_fill_color(0, 51, 102)
+        if is_bold: pdf.set_fill_color(0, 51, 102)
         pdf.cell(35, 7, label, 0, 0, 'R', is_bold)
         pdf.cell(35, 7, f"{mon} {value:,.2f} ", 0, 1, 'R', is_bold)
 
@@ -297,25 +301,14 @@ def generar_pdf_final(emp, cli, items, calc, idioma_code, extras):
     if calc['fee'] > 0: r(T['fee'], calc['fee'])
     if calc['tax_val'] > 0: r(calc['tax_name'], calc['tax_val'])
     if extras.get('bank', 0) > 0: r(T['bank'], extras['bank'])
-    
     lbl_dsc = extras.get('desc_name') if extras.get('desc_name') else T['discount']
     if extras.get('desc', 0) > 0: r(lbl_dsc, -extras['desc'])
-    
-    pdf.ln(1)
-    r(T['total'].upper(), calc['total'], True)
-    pdf.ln(10)
-    pdf.set_font("Arial", 'I', 8)
-    pdf.set_text_color(80)
-    
-    if emp['Nombre'] == EMPRESAS['Latam']['Nombre']: 
-        pdf.multi_cell(0, 4, T['legal_intl'].format(pais=extras['pais']), 0, 'L')
-        pdf.ln(3)
-    
+    pdf.ln(1); r(T['total'].upper(), calc['total'], True); pdf.ln(10)
+    pdf.set_font("Arial", 'I', 8); pdf.set_text_color(80)
+    if emp['Nombre'] == EMPRESAS['Latam']['Nombre']: pdf.multi_cell(0, 4, T['legal_intl'].format(pais=extras['pais']), 0, 'L'); pdf.ln(3)
     if any(any(tr in i['Desc'].lower() for tr in ['feedback','coaching','entrevista']) for i in items):
         pdf.set_font("Arial", 'B', 8); pdf.cell(0, 4, T['noshow_title'], 0, 1)
-        pdf.set_font("Arial", '', 8); pdf.multi_cell(0, 4, T['noshow_text'], 0, 'L')
-        pdf.ln(3)
-    
+        pdf.set_font("Arial", '', 8); pdf.multi_cell(0, 4, T['noshow_text'], 0, 'L'); pdf.ln(3)
     pdf.set_text_color(100); pdf.cell(0, 5, T['validity'], 0, 1)
     return pdf.output(dest='S').encode('latin-1')
 
@@ -340,63 +333,71 @@ def modulo_crm():
                 for i in range(1, 4):
                     cx1, cx2, cx3 = st.columns(3); n = cx1.text_input(f"Nombre {i}", key=f"n{i}"); m = cx2.text_input(f"Mail {i}", key=f"m{i}"); t = cx3.text_input(f"Tel {i}", key=f"t{i}")
                     if n: contacts_data.append(f"{n} ({m})")
-                c1, c2 = st.columns(2); origen = c1.selectbox("Origen", ["SHL", "KAM TalentPRO", "Prospección"]); etapa = c2.selectbox("Etapa Inicial", ["Prospección", "Contacto", "Reunión", "Propuesta"]); exp = st.text_area("Expectativa")
+                c1, c2 = st.columns(2); origen = c1.selectbox("Origen", ["SHL", "KAM TalentPRO", "Prospección del Usuario"]); etapa = c2.selectbox("Etapa Inicial", ["Prospección", "Contacto", "Reunión", "Propuesta"]); expectativa = st.text_area("Expectativa / Dolor Principal")
                 if st.form_submit_button("Guardar Lead"):
-                    new_l = {"id": int(time.time()), "Cliente": nom_cliente, "Area": area, "Pais": pais, "Industria": ind, "Web": web, "Contactos": ", ".join(contacts_data), "Origen": origen, "Etapa": etapa, "Expectativa": exp, "Responsable": st.session_state['current_user'], "Fecha": str(datetime.now().date())}
-                    st.session_state['leads_db'].append(new_l)
-                    github_push_json('url_leads', st.session_state['leads_db'], st.session_state.get('leads_sha')); st.success("Guardado"); time.sleep(1); st.rerun()
+                    new_lead = {"id": int(time.time()), "Cliente": nom_cliente, "Area": area, "Pais": pais, "Industria": ind, "Web": web, "Contactos": ", ".join(contacts_data), "Origen": origen, "Etapa": etapa, "Expectativa": expectativa, "Responsable": st.session_state['current_user'], "Fecha": str(datetime.now().date())}
+                    st.session_state['leads_db'].append(new_lead)
+                    github_push_json('url_leads', st.session_state['leads_db'], st.session_state.get('leads_sha')); st.success("Lead guardado correctamente."); time.sleep(1); st.rerun()
+
         st.divider(); st.subheader("🖊️ Gestionar / Editar Lead")
         v_leads = [l for l in st.session_state['leads_db'] if l.get('Etapa') not in ['Cliente Activo', 'Cerrado Ganado'] and l.get('Area') != 'Cartera']
         if v_leads:
-            sel_l_name = st.selectbox("Seleccionar Lead", [""] + sorted(list(set([l['Cliente'] for l in v_leads]))))
-            if sel_l_name:
-                idx_l = next((i for i, d in enumerate(st.session_state['leads_db']) if d["Cliente"] == sel_l_name), None)
+            sel_lead_name = st.selectbox("Seleccionar Lead para gestionar", [""] + sorted(list(set([l['Cliente'] for l in v_leads]))))
+            if sel_lead_name:
+                idx_l = next((i for i, d in enumerate(st.session_state['leads_db']) if d["Cliente"] == sel_lead_name), None)
                 if idx_l is not None:
-                    ld = st.session_state['leads_db'][idx_l]; col_ed, col_inf = st.columns(2)
-                    with col_ed:
-                        with st.form(f"ed_l_{idx_l}"):
-                            ec = st.text_area("Contactos", value=ld.get('Contactos','')); ee = st.selectbox("Etapa", ["Prospección", "Contacto", "Reunión", "Propuesta", "Cerrado Ganado", "Cerrado Perdido", "Cliente Activo"], index=0); ew = st.text_input("Web", value=ld.get('Web',''))
-                            if st.form_submit_button("💾 Guardar"):
-                                st.session_state['leads_db'][idx_l].update({"Contactos": ec, "Etapa": ee, "Web": ew}); github_push_json('url_leads', st.session_state['leads_db'], st.session_state.get('leads_sha')); st.success("OK"); st.rerun()
-                    with col_inf:
-                        df_c = st.session_state['cotizaciones']; c_l = df_c[df_c['empresa'] == sel_l_name]
-                        if not c_l.empty: st.dataframe(c_l[['fecha', 'total', 'estado']], use_container_width=True)
-                        up_p = st.file_uploader("Subir Propuesta PDF", type=['pdf'], key=f"up_p_{idx_l}")
-                        if up_p and st.button("Guardar Propuesta"):
-                            st.session_state['leads_db'][idx_l]['propuesta_file'] = base64.b64encode(up_p.read()).decode(); github_push_json('url_leads', st.session_state['leads_db'], st.session_state.get('leads_sha')); st.success("Subido"); st.rerun()
+                    ld = st.session_state['leads_db'][idx_l]; col_edit, col_info = st.columns(2)
+                    with col_edit:
+                        with st.form(f"edit_lead_{idx_l}"):
+                            ec = st.text_area("Contactos", value=ld.get('Contactos', '')); ee = st.selectbox("Etapa", ["Prospección", "Contacto", "Reunión", "Propuesta", "Cerrado Ganado", "Cerrado Perdido", "Cliente Activo"], index=0); ew = st.text_input("Web", value=ld.get('Web', ''))
+                            if st.form_submit_button("💾 Guardar Cambios"):
+                                st.session_state['leads_db'][idx_l].update({"Contactos": ec, "Etapa": ee, "Web": ew}); github_push_json('url_leads', st.session_state['leads_db'], st.session_state.get('leads_sha')); st.success("Actualizado"); st.rerun()
+                    with col_info:
+                        st.markdown(f"##### 📂 Historial de {sel_lead_name}")
+                        df_cots = st.session_state['cotizaciones']; cots_lead = df_cots[df_cots['empresa'] == sel_lead_name]
+                        if not cots_lead.empty: st.dataframe(cots_lead[['fecha', 'id', 'total', 'estado']], use_container_width=True, hide_index=True)
+                        if 'propuesta_file' in ld and ld['propuesta_file']:
+                            try:
+                                bin_file = base64.b64decode(ld['propuesta_file'])
+                                st.download_button(label="📥 Descargar Propuesta Actual", data=bin_file, file_name=f"Propuesta_{sel_lead_name}.pdf", mime="application/pdf")
+                            except: pass
+                        uploaded_propuesta = st.file_uploader("Subir/Actualizar PDF Propuesta", type=['pdf'], key=f"up_{idx_l}")
+                        if uploaded_propuesta and st.button("Guardar Archivo"):
+                            st.session_state['leads_db'][idx_l]['propuesta_file'] = base64.b64encode(uploaded_propuesta.read()).decode(); github_push_json('url_leads', st.session_state['leads_db'], st.session_state.get('leads_sha')); st.success("Propuesta subida"); time.sleep(1); st.rerun()
         st.dataframe(pd.DataFrame(v_leads), use_container_width=True)
 
     with tab2:
-        cl_list = sorted(list(set([l['Cliente'] for l in st.session_state['leads_db'] if l.get('Etapa') in ['Cliente Activo', 'Cerrado Ganado'] or l.get('Area') == 'Cartera'])))
-        sel_c = st.selectbox("Cliente 360", [""] + cl_list)
-        if sel_c:
-            dfc = st.session_state['cotizaciones'][st.session_state['cotizaciones']['empresa']==sel_c]
+        leads_db = st.session_state['leads_db']
+        clients_list = sorted(list(set([l['Cliente'] for l in leads_db if l.get('Etapa') in ['Cliente Activo', 'Cerrado Ganado'] or l.get('Area') == 'Cartera'])))
+        sel_client = st.selectbox("Ver Cliente 360", [""] + clients_list)
+        if sel_client:
+            dfc = st.session_state['cotizaciones'][st.session_state['cotizaciones']['empresa']==sel_client]
             st.metric("Total Cotizado", f"${dfc['total'].sum():,.0f}"); st.dataframe(dfc, use_container_width=True)
 
     with tab_import:
-        up_csv = st.file_uploader("Subir CSV Leads", type=["csv"])
-        if up_csv and st.button("Importar"):
+        uploaded_file = st.file_uploader("Subir CSV de Leads", type=["csv"])
+        if uploaded_file and st.button("Procesar Importación"):
             try:
-                df_u = pd.read_csv(up_csv, sep=None, engine='python')
-                for _, r in df_u.iterrows():
-                    st.session_state['leads_db'].append({"id": int(time.time()), "Cliente": r.get('Cliente','S/N'), "Etapa": "Prospección", "Responsable": st.session_state['current_user'], "Fecha": str(datetime.now().date())})
-                github_push_json('url_leads', st.session_state['leads_db'], st.session_state.get('leads_sha')); st.success("Importado"); st.rerun()
-            except: st.error("Error CSV")
+                df_up = pd.read_csv(uploaded_file, sep=None, engine='python')
+                for _, row in df_up.iterrows():
+                    st.session_state['leads_db'].append({"id": int(time.time()), "Cliente": row.get('Cliente', 'S/N'), "Etapa": "Prospección", "Responsable": st.session_state['current_user'], "Fecha": str(datetime.now().date())})
+                github_push_json('url_leads', st.session_state['leads_db'], st.session_state.get('leads_sha')); st.success("Importación exitosa"); st.rerun()
+            except: st.error("Error al procesar archivo")
 
 def modulo_cotizador():
     edit_data = st.session_state.get('cot_edit_data')
     if edit_data:
         st.info(f"✏️ MODO EDICIÓN: ID {edit_data.get('id_orig')}")
-        if st.button("❌ Cancelar"): st.session_state['carrito'] = []; st.session_state['cot_edit_data'] = None; st.rerun()
+        if st.button("❌ Cancelar Edición"): st.session_state['carrito'] = []; st.session_state['cot_edit_data'] = None; st.rerun()
 
     cl, ct = st.columns([1, 5]); idi = cl.selectbox("🌐", ["ES", "PT", "EN"]); txt = TEXTOS[idi]; ct.title(txt['title'])
     c1,c2,c3,c4 = st.columns(4); c1.metric("UF", f"${TASAS['UF']:,.0f}"); c2.metric("USD", f"${TASAS['USD_CLP']:,.0f}"); c3.metric("BRL", f"{TASAS['USD_BRL']:.2f}")
     if c4.button("Actualizar Tasas"): obtener_indicadores.clear(); st.rerun()
     
     ps = st.selectbox("🌎 País", TODOS_LOS_PAISES, index=TODOS_LOS_PAISES.index(edit_data.get('pais')) if edit_data and edit_data.get('pais') in TODOS_LOS_PAISES else 0); ctx = obtener_contexto(ps)
-    cc1,cc2,cc3,cc4=st.columns(4)
+    cc1,cc2,cc3,cc4 = st.columns(4)
     u_teams = get_user_teams_list(st.session_state['users_db'].get(st.session_state['current_user'], {}))
-    sel_t = cc4.selectbox("Célula", u_teams) if len(u_teams)>1 else (u_teams[0] if u_teams else "N/A")
+    sel_team = cc4.selectbox("Asignar a Célula", u_teams) if len(u_teams)>1 else (u_teams[0] if u_teams else "N/A")
     clientes = sorted(list(set([x['Cliente'] for x in st.session_state['leads_db']] + st.session_state['cotizaciones']['empresa'].unique().tolist())))
     emp = cc1.selectbox(txt['client'], [""] + clientes, index=clientes.index(edit_data.get('empresa'))+1 if edit_data and edit_data.get('empresa') in clientes else 0)
     con = cc2.text_input("Contacto", value=edit_data.get('contacto','') if edit_data else ""); ema = cc3.text_input("Email", value=edit_data.get('email','') if edit_data else "")
@@ -406,29 +407,27 @@ def modulo_cotizador():
     with tp:
         c1,c2,c3,c4 = st.columns([3,1,1,1]); lp = ctx['dp']['Producto'].unique().tolist() if not ctx['dp'].empty else []
         if lp:
-            sp=c1.selectbox("Item",lp); qp=c2.number_input("Cant",1,10000,10)
-            # --- LÓGICA DE PRECIO DINÁMICO POR VOLUMEN ACUMULADO ---
-            # Sumamos lo que ya hay en el carrito más lo que queremos agregar
+            sp=c1.selectbox("Item", lp); qp=c2.number_input("Cant",1,10000,10)
+            # Cálculo de volumen acumulado
             c_qty = sum(int(str(i['Det']).replace('x','').strip().split(' ')[0]) for i in st.session_state['carrito'] if i['Ítem']=='Evaluación')
-            up = calc_xls(ctx['dp'], sp, c_qty + qp, ctx['tipo']=='Loc'); c3.metric("Unit", f"{up:,.2f}")
-            
+            up = calc_xls(ctx['dp'], sp, c_qty + qp, ctx['tipo']=='Loc')
+            if up == 0: st.warning("⚠️ Producto no encontrado o fuera de tramo.")
+            c3.metric("Unit", f"{up:,.2f}")
             if c4.button("Add", key="add_p"):
-                # Agregamos el nuevo
                 st.session_state['carrito'].append({"Ítem": "Evaluación", "Desc": sp, "Det": f"x{qp}", "Moneda": ctx['mon'], "Unit": up, "Total": up*qp})
-                
-                # RECALCULAR TODOS LOS ITEMS DEL CARRITO POR EL NUEVO VOLUMEN TOTAL
+                # Recalcular todos por nuevo volumen
                 t_qty = sum(int(str(i['Det']).replace('x','').strip().split(' ')[0]) for i in st.session_state['carrito'] if i['Ítem']=='Evaluación')
-                for i, it in enumerate(st.session_state['carrito']):
-                    if it['Ítem'] == 'Evaluación':
-                        nu = calc_xls(ctx['dp'], it['Desc'], t_qty, ctx['tipo']=='Loc')
-                        nq = int(str(it['Det']).replace('x','').strip().split(' ')[0])
-                        st.session_state['carrito'][i].update({"Unit": nu, "Total": nu * nq})
+                for idx, item in enumerate(st.session_state['carrito']):
+                    if item['Ítem'] == 'Evaluación':
+                        nu = calc_xls(ctx['dp'], item['Desc'], t_qty, ctx['tipo']=='Loc')
+                        nq = int(str(item['Det']).replace('x','').strip().split(' ')[0])
+                        st.session_state['carrito'][idx].update({"Unit": nu, "Total": nu * nq})
                 st.rerun()
 
     with ts:
         c1,c2,c3,c4=st.columns([3,2,1,1]); ls=ctx['ds']['Servicio'].unique().tolist() if not ctx['ds'].empty else []
         if ls:
-            ss=c1.selectbox("Serv",["Certificación PAA"]+ls)
+            ss=c1.selectbox("Serv", ["Certificación PAA"]+ls)
             if "PAA" in ss: qs=c2.number_input("Pers",1,100,1); us=calc_paa(qs,ctx['mon']); dt=f"x{qs}"
             else: r=c2.selectbox("Rol",['Senior','BM','BP']); qs=1; rw=ctx['ds'][ctx['ds']['Servicio']==ss]; us=float(rw.iloc[0][r]) if not rw.empty else 0; dt=f"x{qs} ({r})"
             c3.metric("Unit",f"{us:,.2f}")
@@ -440,7 +439,7 @@ def modulo_cotizador():
         edited_cart = st.data_editor(df_cart, num_rows="dynamic", use_container_width=True, key="ceditor")
         st.session_state['carrito'] = edited_cart.to_dict('records')
         
-        # --- RECALCULO AUTOMATICO SI CAMBIA CANTIDAD EN TABLA ---
+        # Sincronización proactiva de precios en tabla
         try:
             cur_qty = sum(int(str(i['Det']).replace('x','').strip().split(' ')[0]) for i in st.session_state['carrito'] if i['Ítem']=='Evaluación')
             for i, it in enumerate(st.session_state['carrito']):
@@ -457,7 +456,6 @@ def modulo_cotizador():
             fee = st.checkbox("Fee 10%", value=edit_data.get('fee',0)>0 if edit_data else False); vfee = eva*0.1 if fee else 0
             bnk = st.number_input("Bank", value=float(edit_data.get('bank',0)) if edit_data else 0.0)
             dsc_n = st.text_input("Glosa Desc", value=edit_data.get('desc_name','Descuento') if edit_data else "Descuento")
-            
             tipo_d = st.selectbox("Tipo Descuento", ["Fijo", "Porcentaje", "Simular Vol"])
             dsc = 0.0
             if tipo_d == "Fijo": dsc = st.number_input("Monto", value=float(edit_data.get('desc',0)) if edit_data else 0.0)
@@ -465,119 +463,109 @@ def modulo_cotizador():
             else:
                 v_sim = st.number_input("Simular Qty", 1, 10000, 1000)
                 tot_sim = sum(calc_xls(ctx['dp'], i['Desc'], v_sim, ctx['tipo']=='Loc') * int(str(i['Det']).replace('x','').strip().split(' ')[0]) for i in st.session_state['carrito'] if i['Ítem']=='Evaluación')
-                dsc = max(0, eva - tot_sim)
-                st.caption(f"Ahorro: {dsc:,.2f}")
-            
+                dsc = max(0, eva - tot_sim); st.caption(f"Ahorro: {dsc:,.2f}")
             tn, tv = get_impuestos(ps, sub, eva); fin = sub + vfee + tv + bnk - dsc
             st.metric("TOTAL", f"{ctx['mon']} {fin:,.2f}")
-            
             if st.button("GUARDAR / ACTUALIZAR", type="primary"):
                 nid = edit_data['id_orig'] if edit_data else f"TP-{random.randint(1000,9999)}"
-                row = {'id':nid, 'fecha':str(datetime.now().date()), 'empresa':emp, 'pais':ps, 'total':fin, 'moneda':ctx['mon'], 'estado':'Enviada', 'vendedor':ven, 'equipo_asignado': sel_t, 'oc':'', 'factura':'', 'pago':'Pendiente', 'hes':False, 'hes_num':'', 'items': st.session_state['carrito'], 'pdf_data': {'contacto':con, 'email':ema, 'fee':vfee, 'bank':bnk, 'desc':dsc, 'desc_name':dsc_n, 'pais':ps, 'id':nid}, 'idioma': idi, 'factura_file': None}
+                row = {'id':nid, 'fecha':str(datetime.now().date()), 'empresa':emp, 'pais':ps, 'total':fin, 'moneda':ctx['mon'], 'estado':'Enviada', 'vendedor':ven, 'equipo_asignado': sel_team, 'oc':'', 'factura':'', 'pago':'Pendiente', 'hes':False, 'hes_num':'', 'items': st.session_state['carrito'], 'pdf_data': {'contacto':con, 'email':ema, 'fee':vfee, 'bank':bnk, 'desc':dsc, 'desc_name':dsc_n, 'pais':ps, 'id':nid}, 'idioma': idi, 'factura_file': None}
                 if edit_data:
-                    idx = st.session_state['cotizaciones'][st.session_state['cotizaciones']['id']==nid].index
-                    if not idx.empty: st.session_state['cotizaciones'].iloc[idx[0]] = row
+                    idx_c = st.session_state['cotizaciones'][st.session_state['cotizaciones']['id']==nid].index
+                    if not idx_c.empty: st.session_state['cotizaciones'].iloc[idx_c[0]] = row
                 else: st.session_state['cotizaciones'] = pd.concat([st.session_state['cotizaciones'], pd.DataFrame([row])], ignore_index=True)
                 github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha'))
-                st.session_state['carrito'] = []; st.session_state['cot_edit_data'] = None; st.success("Guardado"); time.sleep(1); st.rerun()
+                st.session_state['carrito'] = []; st.session_state['cot_edit_data'] = None; st.success("Guardado correctamente"); time.sleep(1); st.rerun()
         if col_L.button("Limpiar"): st.session_state['carrito'] = []; st.rerun()
 
 def modulo_seguimiento():
-    st.title("🤝 Seguimiento Comercial")
+    st.title("🤝 Seguimiento Comercial (Ventas)")
     df = st.session_state['cotizaciones'].sort_values('fecha', ascending=False)
-    if df.empty: st.info("Sin datos"); return
-    
+    if df.empty: st.info("Sin datos."); return
     if st.session_state.get('current_role') == 'Comercial':
         me = st.session_state['users_db'][st.session_state['current_user']].get('name','')
         df = df[df['vendedor'] == me]
-
     for i, r in df.iterrows():
-        with st.expander(f"{r['fecha']} | {r['id']} | {r['empresa']} | {r['moneda']} {r['total']:,.0f} | {r['estado']}"):
+        with st.expander(f"{r['fecha']} | {r['id']} | {r['empresa']} | {r['estado']}"):
             c1, c2, c3 = st.columns(3)
             new_s = c1.selectbox("Estado", ["Enviada", "Aprobada", "Rechazada", "Perdida", "Facturada"], index=["Enviada", "Aprobada", "Rechazada", "Perdida", "Facturada"].index(r['estado']) if r['estado'] in ["Enviada", "Aprobada", "Rechazada", "Perdida", "Facturada"] else 0)
             hes = c2.checkbox("Requiere HES", value=r.get('hes', False))
             if c3.button("Actualizar", key=f"upd_{r['id']}"):
                 st.session_state['cotizaciones'].at[i, 'estado'] = new_s; st.session_state['cotizaciones'].at[i, 'hes'] = hes
-                if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
-                    if new_s == 'Aprobada': st.balloons()
-                    st.success("OK"); st.rerun()
-            if st.button("✏️ Editar / Clonar", key=f"ed_{r['id']}"):
-                pd_ = r.get('pdf_data', {})
-                st.session_state['carrito'] = r['items']
+                github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha'))
+                if new_s == 'Aprobada': st.balloons()
+                st.success("Actualizado"); st.rerun()
+            if st.button("✏️ Modificar / Clonar", key=f"ed_{r['id']}"):
+                pd_ = r.get('pdf_data', {}); st.session_state['carrito'] = r['items']
                 st.session_state['cot_edit_data'] = {'id_orig': r['id'], 'empresa': r['empresa'], 'pais': r['pais'], 'contacto': pd_.get('contacto',''), 'email': pd_.get('email',''), 'fee': pd_.get('fee',0), 'bank': pd_.get('bank',0), 'desc': pd_.get('desc',0), 'desc_name': pd_.get('desc_name','Desc')}
                 st.session_state['menu_idx'] = 3; st.rerun()
 
 def modulo_finanzas():
-    st.title("💰 Finanzas")
+    st.title("💰 Gestión Financiera")
     df = st.session_state['cotizaciones']
-    t1, t2 = st.tabs(["Por Facturar", "Historial"])
+    t1, t2 = st.tabs(["📝 Por Facturar (Backlog)", "💵 Historial Facturadas"])
     with t1:
-        pend = df[df['estado'] == 'Aprobada']
-        for i, r in pend.iterrows():
+        to_bill = df[df['estado'] == 'Aprobada']
+        for i, r in to_bill.iterrows():
             with st.container(border=True):
                 st.write(f"**{r['empresa']}** | ID: {r['id']} | Total: {r['moneda']} {r['total']:,.2f}")
-                if r.get('hes'): st.warning("⚠️ Requiere HES")
-                c1, c2, c3, c4 = st.columns(4)
-                f_inv = c1.text_input("N° Factura", key=f"f_{r['id']}")
-                f_oc = c2.text_input("OC", value=r.get('oc',''), key=f"o_{r['id']}")
-                up_f = c3.file_uploader("Subir PDF Factura", type=['pdf'], key=f"upf_{r['id']}")
-                if c4.button("Marcar Facturada", key=f"bf_{r['id']}"):
-                    if f_inv:
-                        st.session_state['cotizaciones'].at[i, 'estado'] = 'Facturada'
-                        st.session_state['cotizaciones'].at[i, 'factura'] = f_inv
-                        st.session_state['cotizaciones'].at[i, 'oc'] = f_oc
+                if r.get('hes'): st.error("🚨 REQUISITO: Esta venta requiere N° HES o MIGO.")
+                # Generación de Links PDF Restaurada (Soporte Chile SpA/Ltda)
+                if r.get('items'):
+                    ext = r.get('pdf_data', {'id':r['id'], 'pais':r['pais'], 'bank':0, 'desc':0})
+                    idi = r.get('idioma', 'ES'); cli = {'empresa':r['empresa'], 'contacto':'', 'email':''}
+                    prod_i = [x for x in r['items'] if x['Ítem']=='Evaluación']; serv_i = [x for x in r['items'] if x['Ítem']=='Servicio']
+                    if r['pais'] == "Chile" and prod_i and serv_i:
+                        # SpA (Prod)
+                        sub_p = sum(x['Total'] for x in prod_i); tax_p = sub_p*0.19
+                        pdf_p = generar_pdf_final(EMPRESAS['Chile_Pruebas'], cli, prod_i, {'subtotal':sub_p, 'fee':0, 'tax_name':"IVA", 'tax_val':tax_p, 'total':sub_p+tax_p}, idi, ext)
+                        # Ltda (Serv)
+                        sub_s = sum(x['Total'] for x in serv_i)
+                        pdf_s = generar_pdf_final(EMPRESAS['Chile_Servicios'], cli, serv_i, {'subtotal':sub_s, 'fee':0, 'tax_name':"", 'tax_val':0, 'total':sub_s}, idi, ext)
+                        st.markdown(f'<a href="data:application/pdf;base64,{base64.b64encode(pdf_p).decode()}" download="Cot_{r["id"]}_SpA.pdf">📄 PDF SpA</a> | <a href="data:application/pdf;base64,{base64.b64encode(pdf_s).decode()}" download="Cot_{r["id"]}_Ltda.pdf">📄 PDF Ltda</a>', unsafe_allow_html=True)
+                    else:
+                        ent = get_empresa(r['pais'], r['items']); sub = sum(x['Total'] for x in r['items']); tn, tv = get_impuestos(r['pais'], sub, sub)
+                        pdf = generar_pdf_final(ent, cli, r['items'], {'subtotal':sub, 'fee':0, 'tax_name':tn, 'tax_val':tv, 'total':r['total']}, idi, ext)
+                        st.markdown(f'<a href="data:application/pdf;base64,{base64.b64encode(pdf).decode()}" download="Cot_{r["id"]}.pdf">📄 Ver Cotización</a>', unsafe_allow_html=True)
+                c1, c2, c3, c4 = st.columns(4); n_inv = c1.text_input("N° Factura", key=f"f_{r['id']}"); n_oc = c2.text_input("OC", value=r.get('oc',''), key=f"o_{r['id']}"); up_f = c3.file_uploader("PDF Factura", type=['pdf'], key=f"upf_{r['id']}")
+                if c4.button("Facturar", key=f"bf_{r['id']}"):
+                    if n_inv:
+                        st.session_state['cotizaciones'].at[i, 'estado'] = 'Facturada'; st.session_state['cotizaciones'].at[i, 'factura'] = n_inv; st.session_state['cotizaciones'].at[i, 'oc'] = n_oc
                         if up_f: st.session_state['cotizaciones'].at[i, 'factura_file'] = base64.b64encode(up_f.read()).decode()
                         github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha'))
                         lluvia_dolares(); st.success("Facturado"); time.sleep(2); st.rerun()
     with t2:
-        hist = df[df['estado'] == 'Facturada']
-        st.dataframe(hist[['fecha', 'empresa', 'total', 'factura', 'pago']], use_container_width=True)
+        billed = df[df['estado'] == 'Facturada']
+        st.dataframe(billed[['fecha', 'empresa', 'total', 'factura', 'pago']], use_container_width=True)
 
 def modulo_dashboard():
-    st.title("📊 Dashboard")
-    dfc = st.session_state['cotizaciones'].copy()
-    if dfc.empty: st.info("Sin datos"); return
+    st.title("📊 Dashboards & Analytics")
+    df_cots = st.session_state['cotizaciones'].copy(); df_leads = pd.DataFrame(st.session_state['leads_db'])
+    # Filtro temporal restaurado
+    df_cots['fecha_dt'] = pd.to_datetime(df_cots['fecha'], errors='coerce')
+    all_years = sorted(list(set(df_cots['fecha_dt'].dt.year.dropna().unique().tolist() + [datetime.now().year])))
+    sel_years = st.sidebar.multiselect("Años", all_years, default=[max(all_years)])
+    df_f = df_cots[df_cots['fecha_dt'].dt.year.isin(sel_years)]
     
-    def to_usd(r):
-        if r['moneda'] == 'US$': return r['total']
-        if r['moneda'] == 'UF': return (r['total'] * TASAS['UF']) / TASAS['USD_CLP'] if TASAS['USD_CLP']>0 else 0
-        return r['total'] / TASAS['USD_BRL'] if TASAS['USD_BRL']>0 else 0
-    
-    dfc['total_usd'] = dfc.apply(to_usd, axis=1)
-    
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Leads", len(st.session_state['leads_db']))
-    c2.metric("Pipeline USD", f"${dfc[dfc['estado'].isin(['Enviada','Aprobada'])]['total_usd'].sum():,.0f}")
-    c3.metric("Facturado USD", f"${dfc[dfc['estado']=='Facturada']['total_usd'].sum():,.0f}")
-    
-    st.plotly_chart(px.pie(dfc, names='estado', title="Estado Global"), use_container_width=True)
-    st.plotly_chart(px.bar(dfc, x='vendedor', y='total_usd', color='estado', title="Ventas por Ejecutivo (USD)"), use_container_width=True)
+    c1, c2, c3 = st.columns(3); c1.metric("Total Leads", len(df_leads)); c2.metric("Pipeline USD", f"${df_f[df_f['estado']!='Facturada']['total'].sum():,.0f}"); c3.metric("Total Facturado", f"${df_f[df_f['estado']=='Facturada']['total'].sum():,.0f}")
+    st.plotly_chart(px.pie(df_f, names='estado', title="Distribución de Ventas"), use_container_width=True)
 
 def modulo_admin():
-    st.title("👥 Admin")
+    st.title("👥 Admin Usuarios")
     users = st.session_state['users_db']
-    t1, t2, t3 = st.tabs(["Usuarios", "Estructura", "Reset"])
-    with t1:
-        with st.form("new_u"):
+    tab_u, tab_e = st.tabs(["Gestionar Usuarios", "Estructura"])
+    with tab_u:
+        with st.form("new_user"):
             ne = st.text_input("Email"); nn = st.text_input("Nombre"); np = st.text_input("Pass", type="password"); nr = st.selectbox("Rol", ["Comercial", "Finanzas", "Super Admin"])
             if st.form_submit_button("Crear"):
                 users[ne] = {"name": nn, "role": nr, "password_hash": bcrypt.hashpw(np.encode(), bcrypt.gensalt()).decode(), "equipo": []}
                 github_push_json('url_usuarios', users, st.session_state.get('users_sha')); st.success("Creado"); st.rerun()
-        st.write("Usuarios Actuales:")
         st.dataframe(pd.DataFrame([{"Email": k, "Nombre": v.get('name'), "Rol": v.get('role')} for k, v in users.items() if not k.startswith("_")]), use_container_width=True)
-    with t2:
-        st.subheader("Células")
+    with tab_e:
         conf = users.get('_CONFIG_ORG', {})
         nt = st.text_input("Nueva Célula")
-        if st.button("Añadir") and nt:
+        if st.button("Agregar") and nt:
             conf[nt] = {'metas_anuales': {}, 'subs': {}}; users['_CONFIG_ORG'] = conf
-            github_push_json('url_usuarios', users, st.session_state.get('users_sha')); st.rerun()
-        st.write(list(conf.keys()))
-    with t3:
-        st.warning("Zona de peligro")
-        if st.text_input("Escribe CONFIRMAR") == "CONFIRMAR":
-            if st.button("RESET COTIZACIONES"):
-                github_push_json('url_cotizaciones', [], st.session_state.get('cotizaciones_sha')); st.rerun()
+            github_push_json('url_usuarios', users, st.session_state.get('users_sha')); st.success("Agregada"); st.rerun()
 
 # --- NAVEGACIÓN ---
 with st.sidebar:
@@ -586,7 +574,6 @@ with st.sidebar:
     opts = ["Dashboards", "Seguimiento", "Prospectos y Clientes", "Cotizador", "Finanzas"]
     icons = ['bar-chart', 'check', 'person', 'file', 'currency-dollar']
     if role == "Super Admin": opts.append("Usuarios"); icons.append("people")
-    
     menu = option_menu("Menú", opts, icons=icons, default_index=st.session_state['menu_idx'], key='main_menu')
     st.session_state['menu_idx'] = opts.index(menu)
     if st.button("Salir"): logout()

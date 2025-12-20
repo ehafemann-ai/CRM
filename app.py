@@ -227,20 +227,29 @@ def calc_paa(c, m):
 
 def calc_xls(df, p, c, l):
     if df.empty: return 0.0
-    # Limpiamos p para evitar fallos por espacios
     p_clean = str(p).strip()
-    # Usamos comparación robusta (insensible a mayúsculas/espacios finales)
     r = df[df['Producto'].str.strip() == p_clean]
-    
     if r.empty: return 0.0
-    ts = [50,100,200,300,500,1000,'Infinito'] if l else [100,200,300,500,1000,'Infinito']
+    
+    # Tramos numéricos estándar
+    ts = [50, 100, 200, 300, 500, 1000] if l else [100, 200, 300, 500, 1000]
+    
+    # 1. Buscar en tramos menores o iguales a 1000
     for t in ts:
-        if c <= (float('inf') if t=='Infinito' else t):
-            try: return float(r.iloc[0][t])
-            except: 
-                try: return float(r.iloc[0][str(t)])
-                except: return 0.0
-    return 0.0
+        if c <= t:
+            col_name = str(t)
+            if col_name in r.columns: return float(r.iloc[0][col_name])
+    
+    # 2. Si la cantidad es mayor a 1000, buscar la columna de 'Infinito' o el tramo más alto
+    posibles_inf = ['Infinito', 'infinito', '1001', '1001+', '1000+', '>1000']
+    for col in posibles_inf:
+        if col in r.columns: return float(r.iloc[0][col])
+    
+    # 3. Fallback: Si no hay columna llamada Infinito, tomar el valor de la última columna de la fila
+    try:
+        return float(r.iloc[0, -1])
+    except:
+        return 0.0
 
 def get_impuestos(pais, sub, eva):
     if pais=="Chile": return "IVA (19%)", eva*0.19
@@ -509,16 +518,13 @@ def modulo_finanzas():
             with st.container(border=True):
                 st.write(f"**{r['empresa']}** | ID: {r['id']} | Total: {r['moneda']} {r['total']:,.2f}")
                 if r.get('hes'): st.error("🚨 REQUISITO: Esta venta requiere N° HES o MIGO.")
-                # Generación de Links PDF Restaurada (Soporte Chile SpA/Ltda)
                 if r.get('items'):
                     ext = r.get('pdf_data', {'id':r['id'], 'pais':r['pais'], 'bank':0, 'desc':0})
                     idi = r.get('idioma', 'ES'); cli = {'empresa':r['empresa'], 'contacto':'', 'email':''}
                     prod_i = [x for x in r['items'] if x['Ítem']=='Evaluación']; serv_i = [x for x in r['items'] if x['Ítem']=='Servicio']
                     if r['pais'] == "Chile" and prod_i and serv_i:
-                        # SpA (Prod)
                         sub_p = sum(x['Total'] for x in prod_i); tax_p = sub_p*0.19
                         pdf_p = generar_pdf_final(EMPRESAS['Chile_Pruebas'], cli, prod_i, {'subtotal':sub_p, 'fee':0, 'tax_name':"IVA", 'tax_val':tax_p, 'total':sub_p+tax_p}, idi, ext)
-                        # Ltda (Serv)
                         sub_s = sum(x['Total'] for x in serv_i)
                         pdf_s = generar_pdf_final(EMPRESAS['Chile_Servicios'], cli, serv_i, {'subtotal':sub_s, 'fee':0, 'tax_name':"", 'tax_val':0, 'total':sub_s}, idi, ext)
                         st.markdown(f'<a href="data:application/pdf;base64,{base64.b64encode(pdf_p).decode()}" download="Cot_{r["id"]}_SpA.pdf">📄 PDF SpA</a> | <a href="data:application/pdf;base64,{base64.b64encode(pdf_s).decode()}" download="Cot_{r["id"]}_Ltda.pdf">📄 PDF Ltda</a>', unsafe_allow_html=True)
@@ -540,12 +546,10 @@ def modulo_finanzas():
 def modulo_dashboard():
     st.title("📊 Dashboards & Analytics")
     df_cots = st.session_state['cotizaciones'].copy(); df_leads = pd.DataFrame(st.session_state['leads_db'])
-    # Filtro temporal restaurado
     df_cots['fecha_dt'] = pd.to_datetime(df_cots['fecha'], errors='coerce')
     all_years = sorted(list(set(df_cots['fecha_dt'].dt.year.dropna().unique().tolist() + [datetime.now().year])))
     sel_years = st.sidebar.multiselect("Años", all_years, default=[max(all_years)])
     df_f = df_cots[df_cots['fecha_dt'].dt.year.isin(sel_years)]
-    
     c1, c2, c3 = st.columns(3); c1.metric("Total Leads", len(df_leads)); c2.metric("Pipeline USD", f"${df_f[df_f['estado']!='Facturada']['total'].sum():,.0f}"); c3.metric("Total Facturado", f"${df_f[df_f['estado']=='Facturada']['total'].sum():,.0f}")
     st.plotly_chart(px.pie(df_f, names='estado', title="Distribución de Ventas"), use_container_width=True)
 

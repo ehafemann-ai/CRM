@@ -226,30 +226,36 @@ def calc_paa(c, m):
     return b*TASAS['USD_BRL']
 
 def calc_xls(df, p, c, l):
+    """
+    Busca el precio unitario basado en el nombre del producto y la cantidad acumulada.
+    """
     if df.empty: return 0.0
     p_clean = str(p).strip()
-    r = df[df['Producto'].str.strip() == p_clean]
+    # Búsqueda insensible a mayúsculas y espacios
+    r = df[df['Producto'].str.strip().str.lower() == p_clean.lower()]
     if r.empty: return 0.0
     
-    # Tramos numéricos estándar
+    # Identificamos columnas numéricas de tramos
     ts = [50, 100, 200, 300, 500, 1000] if l else [100, 200, 300, 500, 1000]
     
-    # 1. Buscar en tramos menores o iguales a 1000
+    # Caso cantidad mayor a 1000 (Tramo Infinito)
+    if c > 1000:
+        # Buscamos columnas que representen el tramo más alto
+        posibles_inf = ['Infinito', 'infinito', '1001', '1001+', '1000+', '>1000']
+        for col in posibles_inf:
+            if col in r.columns: return float(r.iloc[0][col])
+        # Si no existe ninguna de esas, devolvemos el último valor de la fila (el más barato)
+        try: return float(r.iloc[0, -1])
+        except: return 0.0
+
+    # Caso cantidad dentro de tramos estándar
     for t in ts:
         if c <= t:
             col_name = str(t)
             if col_name in r.columns: return float(r.iloc[0][col_name])
-    
-    # 2. Si la cantidad es mayor a 1000, buscar la columna de 'Infinito' o el tramo más alto
-    posibles_inf = ['Infinito', 'infinito', '1001', '1001+', '1000+', '>1000']
-    for col in posibles_inf:
-        if col in r.columns: return float(r.iloc[0][col])
-    
-    # 3. Fallback: Si no hay columna llamada Infinito, tomar el valor de la última columna de la fila
-    try:
-        return float(r.iloc[0, -1])
-    except:
-        return 0.0
+            
+    # Si por alguna razón se escapa de los bucles, devolver el último valor
+    return float(r.iloc[0, -1])
 
 def get_impuestos(pais, sub, eva):
     if pais=="Chile": return "IVA (19%)", eva*0.19
@@ -273,6 +279,14 @@ def get_user_teams_list(user_data):
     raw = user_data.get('equipo', [])
     if isinstance(raw, str): return [raw] if raw and raw != "N/A" else []
     return raw
+
+def safe_extract_qty(det_str):
+    """Extrae el número de un detalle como 'x500' o '100 (Senior)'"""
+    try:
+        s = str(det_str).lower().replace('x', '').strip().split(' ')[0].split('(')[0]
+        return int(s)
+    except:
+        return 0
 
 # --- PDF ENGINE ---
 class PDF(FPDF):
@@ -417,19 +431,34 @@ def modulo_cotizador():
         c1,c2,c3,c4 = st.columns([3,1,1,1]); lp = ctx['dp']['Producto'].unique().tolist() if not ctx['dp'].empty else []
         if lp:
             sp=c1.selectbox("Item", lp); qp=c2.number_input("Cant",1,10000,10)
-            # Cálculo de volumen acumulado
-            c_qty = sum(int(str(i['Det']).replace('x','').strip().split(' ')[0]) for i in st.session_state['carrito'] if i['Ítem']=='Evaluación')
-            up = calc_xls(ctx['dp'], sp, c_qty + qp, ctx['tipo']=='Loc')
+            
+            # Cálculo de volumen acumulado (incluyendo lo que vamos a agregar)
+            curr_qty = sum(safe_extract_qty(i['Det']) for i in st.session_state['carrito'] if i['Ítem']=='Evaluación')
+            total_qty = curr_qty + qp
+            
+            # Buscar el precio correcto para ese volumen total
+            up = calc_xls(ctx['dp'], sp, total_qty, ctx['tipo']=='Loc')
+            
             if up == 0: st.warning("⚠️ Producto no encontrado o fuera de tramo.")
             c3.metric("Unit", f"{up:,.2f}")
+            
             if c4.button("Add", key="add_p"):
-                st.session_state['carrito'].append({"Ítem": "Evaluación", "Desc": sp, "Det": f"x{qp}", "Moneda": ctx['mon'], "Unit": up, "Total": up*qp})
-                # Recalcular todos por nuevo volumen
-                t_qty = sum(int(str(i['Det']).replace('x','').strip().split(' ')[0]) for i in st.session_state['carrito'] if i['Ítem']=='Evaluación')
+                # Agregamos el nuevo item
+                st.session_state['carrito'].append({
+                    "Ítem": "Evaluación", 
+                    "Desc": sp, 
+                    "Det": f"x{qp}", 
+                    "Moneda": ctx['mon'], 
+                    "Unit": up, 
+                    "Total": up*qp
+                })
+                
+                # RECALCULAR TODO EL CARRITO (Retroactivo)
+                final_qty = sum(safe_extract_qty(i['Det']) for i in st.session_state['carrito'] if i['Ítem']=='Evaluación')
                 for idx, item in enumerate(st.session_state['carrito']):
                     if item['Ítem'] == 'Evaluación':
-                        nu = calc_xls(ctx['dp'], item['Desc'], t_qty, ctx['tipo']=='Loc')
-                        nq = int(str(item['Det']).replace('x','').strip().split(' ')[0])
+                        nu = calc_xls(ctx['dp'], item['Desc'], final_qty, ctx['tipo']=='Loc')
+                        nq = safe_extract_qty(item['Det'])
                         st.session_state['carrito'][idx].update({"Unit": nu, "Total": nu * nq})
                 st.rerun()
 
@@ -448,15 +477,19 @@ def modulo_cotizador():
         edited_cart = st.data_editor(df_cart, num_rows="dynamic", use_container_width=True, key="ceditor")
         st.session_state['carrito'] = edited_cart.to_dict('records')
         
-        # Sincronización proactiva de precios en tabla
+        # --- RECALCULO AUTOMATICO SI CAMBIA CANTIDAD O PRODUCTO EN TABLA ---
         try:
-            cur_qty = sum(int(str(i['Det']).replace('x','').strip().split(' ')[0]) for i in st.session_state['carrito'] if i['Ítem']=='Evaluación')
+            cur_tot_qty = sum(safe_extract_qty(i['Det']) for i in st.session_state['carrito'] if i['Ítem']=='Evaluación')
+            changed = False
             for i, it in enumerate(st.session_state['carrito']):
                 if it['Ítem'] == 'Evaluación':
-                    nu = calc_xls(ctx['dp'], it['Desc'], cur_qty, ctx['tipo']=='Loc')
-                    nq = int(str(it['Det']).replace('x','').strip().split(' ')[0])
-                    if it['Unit'] != nu:
-                        st.session_state['carrito'][i].update({"Unit": nu, "Total": nu * nq}); st.rerun()
+                    nu = calc_xls(ctx['dp'], it['Desc'], cur_tot_qty, ctx['tipo']=='Loc')
+                    nq = safe_extract_qty(it['Det'])
+                    # Si el precio calculado es distinto al de la tabla, actualizamos
+                    if abs(it['Unit'] - nu) > 0.001:
+                        st.session_state['carrito'][i].update({"Unit": nu, "Total": nu * nq})
+                        changed = True
+            if changed: st.rerun()
         except: pass
 
         sub = sum(i['Total'] for i in st.session_state['carrito']); eva = sum(i['Total'] for i in st.session_state['carrito'] if i['Ítem']=='Evaluación')
@@ -471,7 +504,7 @@ def modulo_cotizador():
             elif tipo_d == "Porcentaje": dsc = sub * (st.number_input("%", 0, 100, 0)/100)
             else:
                 v_sim = st.number_input("Simular Qty", 1, 10000, 1000)
-                tot_sim = sum(calc_xls(ctx['dp'], i['Desc'], v_sim, ctx['tipo']=='Loc') * int(str(i['Det']).replace('x','').strip().split(' ')[0]) for i in st.session_state['carrito'] if i['Ítem']=='Evaluación')
+                tot_sim = sum(calc_xls(ctx['dp'], i['Desc'], v_sim, ctx['tipo']=='Loc') * safe_extract_qty(i['Det']) for i in st.session_state['carrito'] if i['Ítem']=='Evaluación')
                 dsc = max(0, eva - tot_sim); st.caption(f"Ahorro: {dsc:,.2f}")
             tn, tv = get_impuestos(ps, sub, eva); fin = sub + vfee + tv + bnk - dsc
             st.metric("TOTAL", f"{ctx['mon']} {fin:,.2f}")

@@ -283,19 +283,40 @@ def generar_pdf_final(emp, cli, items, calc, idioma_code, extras):
     for i in items:
         q=str(i['Det']).split('(')[0].replace('x','').strip(); pdf.cell(110,7,f"  {i['Desc'][:60]}",'B',0,'L'); pdf.cell(20,7,q,'B',0,'C'); pdf.cell(30,7,f"{i['Unit']:,.2f}",'B',0,'R'); pdf.cell(30,7,f"{i['Total']:,.2f}",'B',1,'R')
     pdf.ln(5); x=120
-    def r(l,v,b=False):
-        pdf.set_x(x); pdf.set_font("Arial",'B' if b else '',10); pdf.set_text_color(0 if not b else 255); if b: pdf.set_fill_color(0,51,102)
-        pdf.cell(35,7,l,0,0,'R',b); pdf.cell(35,7,f"{mon} {v:,.2f} ",0,1,'R',b)
-    r(T['subtotal'], calc['subtotal']); if calc['fee']>0: r(T['fee'], calc['fee'])
-    if calc['tax_val']>0: r(calc['tax_name'], calc['tax_val'])
-    if extras.get('bank',0)>0: r(T['bank'], extras['bank'])
+    
+    def r(label, value, is_bold=False):
+        pdf.set_x(x)
+        pdf.set_font("Arial", 'B' if is_bold else '', 10)
+        pdf.set_text_color(0 if not is_bold else 255)
+        if is_bold:
+            pdf.set_fill_color(0, 51, 102)
+        pdf.cell(35, 7, label, 0, 0, 'R', is_bold)
+        pdf.cell(35, 7, f"{mon} {value:,.2f} ", 0, 1, 'R', is_bold)
+
+    r(T['subtotal'], calc['subtotal'])
+    if calc['fee'] > 0: r(T['fee'], calc['fee'])
+    if calc['tax_val'] > 0: r(calc['tax_name'], calc['tax_val'])
+    if extras.get('bank', 0) > 0: r(T['bank'], extras['bank'])
+    
     lbl_dsc = extras.get('desc_name') if extras.get('desc_name') else T['discount']
-    if extras.get('desc',0)>0: r(lbl_dsc, -extras['desc'])
-    pdf.ln(1); r(T['total'].upper(), calc['total'], True); pdf.ln(10); pdf.set_font("Arial",'I',8); pdf.set_text_color(80)
-    if emp['Nombre']==EMPRESAS['Latam']['Nombre']: pdf.multi_cell(0,4,T['legal_intl'].format(pais=extras['pais']),0,'L'); pdf.ln(3)
+    if extras.get('desc', 0) > 0: r(lbl_dsc, -extras['desc'])
+    
+    pdf.ln(1)
+    r(T['total'].upper(), calc['total'], True)
+    pdf.ln(10)
+    pdf.set_font("Arial", 'I', 8)
+    pdf.set_text_color(80)
+    
+    if emp['Nombre'] == EMPRESAS['Latam']['Nombre']: 
+        pdf.multi_cell(0, 4, T['legal_intl'].format(pais=extras['pais']), 0, 'L')
+        pdf.ln(3)
+    
     if any(any(tr in i['Desc'].lower() for tr in ['feedback','coaching','entrevista']) for i in items):
-        pdf.set_font("Arial",'B',8); pdf.cell(0,4,T['noshow_title'],0,1); pdf.set_font("Arial",'',8); pdf.multi_cell(0,4,T['noshow_text'],0,'L'); pdf.ln(3)
-    pdf.set_text_color(100); pdf.cell(0,5,T['validity'],0,1)
+        pdf.set_font("Arial", 'B', 8); pdf.cell(0, 4, T['noshow_title'], 0, 1)
+        pdf.set_font("Arial", '', 8); pdf.multi_cell(0, 4, T['noshow_text'], 0, 'L')
+        pdf.ln(3)
+    
+    pdf.set_text_color(100); pdf.cell(0, 5, T['validity'], 0, 1)
     return pdf.output(dest='S').encode('latin-1')
 
 def lluvia_dolares():
@@ -386,16 +407,21 @@ def modulo_cotizador():
         c1,c2,c3,c4 = st.columns([3,1,1,1]); lp = ctx['dp']['Producto'].unique().tolist() if not ctx['dp'].empty else []
         if lp:
             sp=c1.selectbox("Item",lp); qp=c2.number_input("Cant",1,10000,10)
-            # --- PRECIO DINÁMICO ---
-            c_qty = sum(int(str(i['Det']).replace('x','').strip()) for i in st.session_state['carrito'] if i['Ítem']=='Evaluación')
+            # --- LÓGICA DE PRECIO DINÁMICO POR VOLUMEN ACUMULADO ---
+            # Sumamos lo que ya hay en el carrito más lo que queremos agregar
+            c_qty = sum(int(str(i['Det']).replace('x','').strip().split(' ')[0]) for i in st.session_state['carrito'] if i['Ítem']=='Evaluación')
             up = calc_xls(ctx['dp'], sp, c_qty + qp, ctx['tipo']=='Loc'); c3.metric("Unit", f"{up:,.2f}")
+            
             if c4.button("Add", key="add_p"):
+                # Agregamos el nuevo
                 st.session_state['carrito'].append({"Ítem": "Evaluación", "Desc": sp, "Det": f"x{qp}", "Moneda": ctx['mon'], "Unit": up, "Total": up*qp})
-                # RECALCULAR TODOS LOS ITEMS DEL CARRITO POR EL NUEVO VOLUMEN
-                t_qty = sum(int(str(i['Det']).replace('x','').strip()) for i in st.session_state['carrito'] if i['Ítem']=='Evaluación')
+                
+                # RECALCULAR TODOS LOS ITEMS DEL CARRITO POR EL NUEVO VOLUMEN TOTAL
+                t_qty = sum(int(str(i['Det']).replace('x','').strip().split(' ')[0]) for i in st.session_state['carrito'] if i['Ítem']=='Evaluación')
                 for i, it in enumerate(st.session_state['carrito']):
                     if it['Ítem'] == 'Evaluación':
-                        nu = calc_xls(ctx['dp'], it['Desc'], t_qty, ctx['tipo']=='Loc'); nq = int(str(it['Det']).replace('x','').strip())
+                        nu = calc_xls(ctx['dp'], it['Desc'], t_qty, ctx['tipo']=='Loc')
+                        nq = int(str(it['Det']).replace('x','').strip().split(' ')[0])
                         st.session_state['carrito'][i].update({"Unit": nu, "Total": nu * nq})
                 st.rerun()
 
@@ -431,7 +457,7 @@ def modulo_cotizador():
             fee = st.checkbox("Fee 10%", value=edit_data.get('fee',0)>0 if edit_data else False); vfee = eva*0.1 if fee else 0
             bnk = st.number_input("Bank", value=float(edit_data.get('bank',0)) if edit_data else 0.0)
             dsc_n = st.text_input("Glosa Desc", value=edit_data.get('desc_name','Descuento') if edit_data else "Descuento")
-            # Logica de descuento (Simulacion volumen incorporada)
+            
             tipo_d = st.selectbox("Tipo Descuento", ["Fijo", "Porcentaje", "Simular Vol"])
             dsc = 0.0
             if tipo_d == "Fijo": dsc = st.number_input("Monto", value=float(edit_data.get('desc',0)) if edit_data else 0.0)
@@ -461,7 +487,6 @@ def modulo_seguimiento():
     df = st.session_state['cotizaciones'].sort_values('fecha', ascending=False)
     if df.empty: st.info("Sin datos"); return
     
-    # Filtro por Rol / Equipo
     if st.session_state.get('current_role') == 'Comercial':
         me = st.session_state['users_db'][st.session_state['current_user']].get('name','')
         df = df[df['vendedor'] == me]
@@ -513,7 +538,6 @@ def modulo_dashboard():
     dfc = st.session_state['cotizaciones'].copy()
     if dfc.empty: st.info("Sin datos"); return
     
-    # Conversión simple a USD para gráficos
     def to_usd(r):
         if r['moneda'] == 'US$': return r['total']
         if r['moneda'] == 'UF': return (r['total'] * TASAS['UF']) / TASAS['USD_CLP'] if TASAS['USD_CLP']>0 else 0

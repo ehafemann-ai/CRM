@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import random
@@ -16,8 +15,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 # --- 1. CONFIGURACIÓN GLOBAL ---
-# "initial_sidebar_state='expanded'" asegura que el menú arranque abierto.
-# El usuario puede cerrarlo manualmente con el botón del encabezado.
 st.set_page_config(
     page_title="TalentPRO CRM", 
     layout="wide", 
@@ -88,7 +85,6 @@ st.markdown("""
     /* Tarjetas de admin */
     .admin-card { padding: 20px; background-color: #f0f2f6; border-radius: 10px; margin-bottom: 20px; border-left: 5px solid #003366;}
     
-    /* Ocultamos elementos innecesarios de Streamlit pero DEJAMOS el header visible para el botón hamburguesa */
     #MainMenu {visibility: hidden;} 
     footer {visibility: hidden;}
     
@@ -1397,9 +1393,89 @@ def modulo_dashboard():
     curr_email = st.session_state['current_user']
     curr_role = st.session_state.get('current_role', 'Comercial')
 
-    tab_gen, tab_kpi, tab_lead, tab_sale, tab_bill = st.tabs(["📊 General", "🎯 Metas y Desempeño", "📇 Leads (Funnel)", "📈 Cierre Ventas", "💵 Facturación"])
+    # --- DEFINICIÓN DE PESTAÑAS (MODIFICADO PARA SUPER ADMIN) ---
+    tabs_names = ["📊 General", "🎯 Metas y Desempeño", "📇 Leads (Funnel)", "📈 Cierre Ventas", "💵 Facturación"]
     
-    with tab_gen:
+    # Si es Super Admin, agregamos la pestaña global al principio
+    if curr_role == 'Super Admin':
+        tabs_names.insert(0, "🌍 Visión Global (Admin)")
+        
+    all_tabs = st.tabs(tabs_names)
+    
+    # Lógica para asignar contenido a cada pestaña
+    idx_offset = 1 if curr_role == 'Super Admin' else 0
+    
+    # --- PESTAÑA: VISIÓN GLOBAL (SOLO SUPER ADMIN) ---
+    if curr_role == 'Super Admin':
+        with all_tabs[0]:
+            st.markdown("### 🌍 Visión Global de la Empresa")
+            
+            # Cálculo de Métricas Globales
+            if not df_cots_filtered.empty:
+                df_cots_filtered['Total_USD_Global'] = df_cots_filtered.apply(convert_to_usd, axis=1)
+                
+                # 1. Ventas Totales (Facturada)
+                global_sales = df_cots_filtered[df_cots_filtered['estado'] == 'Facturada']['Total_USD_Global'].sum()
+                
+                # 2. Pipeline Total (Enviada + Aprobada)
+                global_pipeline = df_cots_filtered[df_cots_filtered['estado'].isin(['Enviada', 'Aprobada'])]['Total_USD_Global'].sum()
+                
+                # 3. Forecast (Aprobada + Facturada)
+                global_forecast = df_cots_filtered[df_cots_filtered['estado'].isin(['Aprobada', 'Facturada'])]['Total_USD_Global'].sum()
+                
+                c_g1, c_g2, c_g3 = st.columns(3)
+                c_g1.metric("Ventas Totales (USD)", f"${global_sales:,.0f}")
+                c_g2.metric("Pipeline Abierto (USD)", f"${global_pipeline:,.0f}")
+                c_g3.metric("Forecast Total (Cerrado + Facturado)", f"${global_forecast:,.0f}")
+                
+                st.divider()
+                
+                # 4. Gráfico Comparativo por Equipos (Células)
+                st.subheader("🏆 Comparativa por Equipos")
+                
+                # Agrupar por equipo_asignado
+                if 'equipo_asignado' in df_cots_filtered.columns:
+                    df_team_perf = df_cots_filtered[df_cots_filtered['estado'] == 'Facturada'].groupby('equipo_asignado')['Total_USD_Global'].sum().reset_index()
+                    df_team_perf.columns = ['Equipo', 'Venta Total (USD)']
+                    df_team_perf = df_team_perf.sort_values('Venta Total (USD)', ascending=False)
+                    
+                    if not df_team_perf.empty:
+                        fig_teams = px.bar(df_team_perf, x='Equipo', y='Venta Total (USD)', color='Equipo', title="Ventas por Célula (USD)", text_auto='.2s')
+                        st.plotly_chart(fig_teams, use_container_width=True)
+                    else:
+                        st.info("No hay ventas facturadas para mostrar comparativa.")
+                
+                st.divider()
+                
+                # 5. Visión Detallada por Equipo (Drill-down)
+                st.subheader("🔍 Detalle por Célula")
+                equipos_disponibles = df_cots_filtered['equipo_asignado'].unique().tolist() if 'equipo_asignado' in df_cots_filtered.columns else []
+                sel_team_global = st.selectbox("Seleccionar Equipo para ver detalle:", ["Todos"] + sorted([str(x) for x in equipos_disponibles]))
+                
+                df_view = df_cots_filtered.copy()
+                if sel_team_global != "Todos":
+                    df_view = df_view[df_view['equipo_asignado'] == sel_team_global]
+                
+                # Mostrar KPIs del equipo seleccionado
+                t_sales = df_view[df_view['estado'] == 'Facturada']['Total_USD_Global'].sum()
+                t_pipe = df_view[df_view['estado'].isin(['Enviada', 'Aprobada'])]['Total_USD_Global'].sum()
+                t_cnt = len(df_view[df_view['estado'] == 'Facturada'])
+                
+                k1, k2, k3 = st.columns(3)
+                k1.metric(f"Ventas {sel_team_global}", f"${t_sales:,.0f}")
+                k2.metric(f"Pipeline {sel_team_global}", f"${t_pipe:,.0f}")
+                k3.metric("Cant. Cierres", t_cnt)
+                
+                st.caption("Desglose de Cotizaciones del Equipo:")
+                st.dataframe(df_view[['fecha', 'empresa', 'total', 'moneda', 'estado', 'vendedor']], use_container_width=True, hide_index=True)
+
+            else:
+                st.info("No hay datos para generar la visión global.")
+
+    # --- RESTO DE PESTAÑAS (IGUAL QUE ANTES) ---
+    # Usamos all_tabs[idx_offset + i] para acceder a la pestaña correcta
+    
+    with all_tabs[idx_offset + 0]: # General
         df_open = df_cots_filtered[df_cots_filtered['estado'].isin(['Enviada', 'Aprobada'])].copy()
         cant_abiertas = len(df_open)
         monto_abierto_usd = 0
@@ -1420,7 +1496,8 @@ def modulo_dashboard():
         if not df_cots_filtered.empty:
             fig = px.pie(df_cots_filtered, names='estado', title="Distribución Estado Cotizaciones")
             st.plotly_chart(fig, use_container_width=True)
-    with tab_kpi:
+            
+    with all_tabs[idx_offset + 1]: # Metas
         st.subheader("Desempeño Individual vs Metas")
         user_data = users.get(curr_email, {})
         my_team = user_data.get('equipo', 'Sin Equipo')
@@ -1472,7 +1549,8 @@ def modulo_dashboard():
                     else: st.info(f"Sin meta global definida.")
             else:
                 st.info("Usuario sin célula asignada.")
-    with tab_lead:
+    
+    with all_tabs[idx_offset + 2]: # Leads
         if not df_leads_filtered.empty:
             c1, c2 = st.columns(2)
             with c1:
@@ -1484,7 +1562,8 @@ def modulo_dashboard():
                 fig_source = px.bar(df_leads_filtered, x='Origen', title="Fuentes", color='Origen')
                 st.plotly_chart(fig_source, use_container_width=True)
         else: st.info("No hay datos de leads.")
-    with tab_sale:
+        
+    with all_tabs[idx_offset + 3]: # Cierre Ventas
         if not df_cots_filtered.empty:
             df_sales = df_cots_filtered[df_cots_filtered['estado'].isin(['Aprobada','Facturada'])]
             if not df_sales.empty:
@@ -1493,7 +1572,8 @@ def modulo_dashboard():
                 st.plotly_chart(fig_line, use_container_width=True)
             else: st.info("Aún no hay ventas cerradas.")
         else: st.info("Sin datos.")
-    with tab_bill:
+        
+    with all_tabs[idx_offset + 4]: # Facturación
         df_inv = df_cots_filtered[df_cots_filtered['estado']=='Facturada']
         if not df_inv.empty:
             c1, c2, c3 = st.columns(3)

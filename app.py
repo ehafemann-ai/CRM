@@ -362,11 +362,27 @@ def get_user_teams_list(user_data):
     return raw
 
 # --- PDF ENGINE ---
+# Función para limpiar texto y evitar UnicodeEncodeError en FPDF
+def clean_text(text):
+    """
+    Limpia el texto de caracteres no soportados por Latin-1 (fpdf estándar).
+    Reemplaza emojis o caracteres raros por un signo de interrogación '?'
+    para evitar que la app se caiga.
+    """
+    if text is None: return ""
+    text = str(text)
+    try:
+        # Intenta codificar a latin-1, si falla, reemplaza el caracter y decodifica de nuevo
+        return text.encode('latin-1', 'replace').decode('latin-1')
+    except:
+        return ""
+
 class PDF(FPDF):
     def header(self):
         if os.path.exists(LOGO_PATH): self.image(LOGO_PATH, 10, 10, 35)
         self.set_font('Arial', 'B', 18); self.set_text_color(0, 51, 102)
-        self.cell(0, 15, getattr(self,'tit_doc','COTIZACIÓN'), 0, 1, 'R')
+        tit = getattr(self,'tit_doc','COTIZACIÓN')
+        self.cell(0, 15, clean_text(tit), 0, 1, 'R')
         self.set_draw_color(0, 51, 102); self.line(10, 30, 200, 30); self.ln(5)
     def footer(self):
         self.set_y(-15); self.set_font('Arial', 'I', 8); self.set_text_color(128)
@@ -375,40 +391,81 @@ class PDF(FPDF):
 def generar_pdf_final(emp, cli, items, calc, idioma_code, extras):
     T = TEXTOS.get(idioma_code, TEXTOS["ES"])
     pdf = PDF(); pdf.tit_doc=T['quote']; pdf.add_page()
-    pdf.set_font("Arial",'B',10); pdf.set_text_color(0,51,102); pdf.cell(95,5,emp['Nombre'],0,0)
-    pdf.set_text_color(100); pdf.cell(95,5,T['invoice_to'],0,1)
+    
+    # Datos Empresa (Sanitizados)
+    pdf.set_font("Arial",'B',10); pdf.set_text_color(0,51,102)
+    pdf.cell(95,5, clean_text(emp['Nombre']), 0, 0)
+    
+    pdf.set_text_color(100); pdf.cell(95,5, clean_text(T['invoice_to']), 0, 1)
+    
     pdf.set_font("Arial",'',9); pdf.set_text_color(50); y=pdf.get_y()
-    pdf.cell(95,5,emp['ID'],0,1); pdf.multi_cell(90,5,emp['Dir']); pdf.cell(95,5,emp['Giro'],0,1)
-    pdf.set_xy(105,y); pdf.set_font("Arial",'B',10); pdf.set_text_color(0); pdf.cell(95,5,cli['empresa'],0,1)
+    pdf.cell(95,5, clean_text(emp['ID']), 0, 1)
+    pdf.multi_cell(90,5, clean_text(emp['Dir']))
+    pdf.cell(95,5, clean_text(emp['Giro']), 0, 1)
+    
+    # Datos Cliente (Sanitizados)
+    pdf.set_xy(105,y); pdf.set_font("Arial",'B',10); pdf.set_text_color(0)
+    pdf.cell(95,5, clean_text(cli['empresa']), 0, 1)
+    
     pdf.set_xy(105,pdf.get_y()); pdf.set_font("Arial",'',9); pdf.set_text_color(50)
-    pdf.cell(95,5,cli['contacto'],0,1); pdf.set_xy(105,pdf.get_y()); pdf.cell(95,5,cli['email'],0,1)
+    pdf.cell(95,5, clean_text(cli['contacto']), 0, 1)
+    pdf.set_xy(105,pdf.get_y()); pdf.cell(95,5, clean_text(cli['email']), 0, 1)
+    
     pdf.ln(5); pdf.set_xy(105,pdf.get_y()); pdf.set_text_color(0,51,102)
     pdf.cell(95,5,f"Date: {datetime.now().strftime('%d/%m/%Y')} | ID: {extras['id']}",0,1); pdf.ln(10)
+    
+    # Tabla Items
     pdf.set_fill_color(0,51,102); pdf.set_text_color(255); pdf.set_font("Arial",'B',9)
-    pdf.cell(110,8,T['desc'],0,0,'L',1); pdf.cell(20,8,T['qty'],0,0,'C',1); pdf.cell(30,8,T['unit'],0,0,'R',1); pdf.cell(30,8,T['total'],0,1,'R',1)
+    pdf.cell(110,8, clean_text(T['desc']), 0, 0,'L',1)
+    pdf.cell(20,8, clean_text(T['qty']), 0, 0,'C',1)
+    pdf.cell(30,8, clean_text(T['unit']), 0, 0,'R',1)
+    pdf.cell(30,8, clean_text(T['total']), 0, 1,'R',1)
+    
     pdf.set_text_color(0); pdf.set_font("Arial",'',8); mon=items[0]['Moneda']
     for i in items:
-        q=str(i['Det']).split('(')[0].replace('x','').strip()
-        pdf.cell(110,7,f"  {i['Desc'][:60]}",'B',0,'L'); pdf.cell(20,7,q,'B',0,'C'); pdf.cell(30,7,f"{i['Unit']:,.2f}",'B',0,'R'); pdf.cell(30,7,f"{i['Total']:,.2f}",'B',1,'R')
+        # Limpieza de descripción e items
+        desc_limpia = clean_text(i['Desc'][:60])
+        q = str(i['Det']).split('(')[0].replace('x','').strip()
+        q_limpia = clean_text(q)
+        
+        pdf.cell(110,7,f"  {desc_limpia}",'B',0,'L')
+        pdf.cell(20,7,q_limpia,'B',0,'C')
+        pdf.cell(30,7,f"{i['Unit']:,.2f}",'B',0,'R')
+        pdf.cell(30,7,f"{i['Total']:,.2f}",'B',1,'R')
     pdf.ln(5)
+    
+    # Totales
     x=120
     def r(l,v,b=False):
         pdf.set_x(x); pdf.set_font("Arial",'B' if b else '',10); pdf.set_text_color(0 if not b else 255)
         if b: pdf.set_fill_color(0,51,102)
-        pdf.cell(35,7,l,0,0,'R',b); pdf.cell(35,7,f"{mon} {v:,.2f} ",0,1,'R',b)
+        pdf.cell(35,7, clean_text(l), 0, 0,'R',b)
+        pdf.cell(35,7,f"{mon} {v:,.2f} ",0,1,'R',b)
+        
     r(T['subtotal'], calc['subtotal'])
     if calc['fee']>0: r(T['fee'], calc['fee'])
     if calc['tax_val']>0: r(calc['tax_name'], calc['tax_val'])
     if extras.get('bank',0)>0: r(T['bank'], extras['bank'])
+    
     lbl_dsc = extras.get('desc_name') if extras.get('desc_name') else T['discount']
     if extras.get('desc',0)>0: r(lbl_dsc, -extras['desc'])
+    
     pdf.ln(1); r(T['total'].upper(), calc['total'], True); pdf.ln(10)
+    
+    # Textos legales y notas
     pdf.set_font("Arial",'I',8); pdf.set_text_color(80)
-    if emp['Nombre']==EMPRESAS['Latam']['Nombre']: pdf.multi_cell(0,4,T['legal_intl'].format(pais=extras['pais']),0,'L'); pdf.ln(3)
+    if emp['Nombre']==EMPRESAS['Latam']['Nombre']: 
+        txt_legal = T['legal_intl'].format(pais=extras['pais'])
+        pdf.multi_cell(0,4, clean_text(txt_legal), 0,'L'); pdf.ln(3)
+        
     if any(any(tr in i['Desc'].lower() for tr in ['feedback','coaching','entrevista']) for i in items):
-        pdf.set_font("Arial",'B',8); pdf.cell(0,4,T['noshow_title'],0,1); pdf.set_font("Arial",'',8); pdf.multi_cell(0,4,T['noshow_text'],0,'L'); pdf.ln(3)
-    pdf.set_text_color(100); pdf.cell(0,5,T['validity'],0,1)
-    return pdf.output(dest='S').encode('latin-1')
+        pdf.set_font("Arial",'B',8); pdf.cell(0,4, clean_text(T['noshow_title']), 0,1)
+        pdf.set_font("Arial",'',8); pdf.multi_cell(0,4, clean_text(T['noshow_text']), 0,'L'); pdf.ln(3)
+        
+    pdf.set_text_color(100); pdf.cell(0,5, clean_text(T['validity']), 0,1)
+    
+    # IMPORTANTE: Usamos 'replace' en el encode final también por seguridad
+    return pdf.output(dest='S').encode('latin-1', 'replace')
 
 # --- FUNCIÓN ANIMACIÓN LLUVIA DE DÓLARES ---
 def lluvia_dolares():

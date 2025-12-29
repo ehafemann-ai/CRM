@@ -1,4 +1,4 @@
-mport streamlit as st
+import streamlit as st
 import pandas as pd
 import random
 import requests
@@ -19,7 +19,7 @@ st.set_page_config(
     page_title="TalentPRO CRM", 
     layout="wide", 
     page_icon="🔒", 
-    initial_sidebar_state="expanded" # <--- ESTO FUERZA AL MENU A ABRIRSE
+    initial_sidebar_state="expanded" # <--- ESTO FUERZA AL MENU A ABRIRSE AL INICIO
 )
 
 # --- 2. PUERTA TRASERA (BACKDOOR) ---
@@ -85,9 +85,11 @@ st.markdown("""
     /* Tarjetas de admin */
     .admin-card { padding: 20px; background-color: #f0f2f6; border-radius: 10px; margin-bottom: 20px; border-left: 5px solid #003366;}
     
-    /* HEMOS ELIMINADO header {visibility: hidden;} PORQUE OCULTABA EL BOTÓN DEL MENÚ */
-    #MainMenu {visibility: hidden;} /* Solo ocultamos el menú de 3 puntos de la derecha */
-    footer {visibility: hidden;}
+    /* CORRECCIÓN CRÍTICA: NO OCULTAR HEADER COMPLETO */
+    /* header {visibility: hidden;}  <-- ESTA LINEA ERA LA CULPABLE */
+    
+    #MainMenu {visibility: hidden;} /* Ocultamos solo el menú de 3 puntos (derecha) */
+    footer {visibility: hidden;} /* Ocultamos footer "Made with Streamlit" */
     </style>
 """, unsafe_allow_html=True)
 

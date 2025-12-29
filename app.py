@@ -1669,13 +1669,75 @@ def modulo_admin():
                     else: st.warning("No se encontraron usuarios nuevos para importar.")
             except Exception as e: st.error(f"Error procesando CSV: {e}")
 
+def modulo_perfil():
+    st.title("👤 Mi Perfil")
+    email = st.session_state['current_user']
+    user_data = st.session_state['users_db'].get(email, {})
+
+    col1, col2 = st.columns([1, 2])
+    
+    with col1:
+        # Foto de perfil
+        st.subheader("Foto de Perfil")
+        current_pic = user_data.get('photo')
+        if current_pic:
+            st.image(base64.b64decode(current_pic), width=150)
+        else:
+            st.info("Sin foto")
+        
+        uploaded_pic = st.file_uploader("Cambiar Foto", type=['png', 'jpg', 'jpeg'])
+    
+    with col2:
+        st.subheader("Datos Personales")
+        new_name = st.text_input("Nombre para mostrar", value=user_data.get('name', ''))
+        
+        st.markdown("---")
+        st.subheader("Seguridad")
+        p1 = st.text_input("Nueva Contraseña", type="password")
+        p2 = st.text_input("Confirmar Contraseña", type="password")
+        
+        if st.button("💾 Guardar Cambios de Perfil", type="primary"):
+            changes = False
+            # Logic to save photo
+            if uploaded_pic:
+                b64_pic = base64.b64encode(uploaded_pic.read()).decode()
+                user_data['photo'] = b64_pic
+                changes = True
+            
+            # Logic to save name
+            if new_name != user_data.get('name'):
+                user_data['name'] = new_name
+                changes = True
+                
+            # Logic to save password
+            if p1 or p2:
+                if p1 == p2 and p1:
+                    user_data['password_hash'] = bcrypt.hashpw(p1.encode(), bcrypt.gensalt()).decode()
+                    changes = True
+                    st.success("Contraseña actualizada.")
+                elif p1 != p2:
+                    st.error("Las contraseñas no coinciden.")
+                    return
+
+            if changes:
+                st.session_state['users_db'][email] = user_data
+                if github_push_json('url_usuarios', st.session_state['users_db'], st.session_state.get('users_sha')):
+                    sync_users_after_update()
+                    st.success("Perfil actualizado correctamente.")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("Error al guardar en la nube.")
+            else:
+                st.info("No se detectaron cambios.")
+
 # --- MENU LATERAL ---
 with st.sidebar:
     if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=130)
     role = st.session_state.get('current_role', 'Comercial')
-    opts = ["Dashboards", "Seguimiento", "Prospectos y Clientes", "Cotizador", "Finanzas", "Tutorial"]
-    icos = ['bar-chart', 'check', 'person', 'file', 'currency-dollar', 'book']
-    if role == "Super Admin": opts.append("Usuarios"); icos.append("people")
+    opts = ["Dashboards", "Seguimiento", "Prospectos y Clientes", "Cotizador", "Finanzas", "Tutorial", "Mi Perfil"]
+    icos = ['bar-chart', 'check', 'person', 'file', 'currency-dollar', 'book', 'person-circle']
+    if role == "Super Admin": opts.insert(6, "Usuarios"); icos.insert(6, "people")
     if st.session_state['menu_idx'] < len(opts): default_idx = st.session_state['menu_idx']
     else: default_idx = 0
     menu = option_menu("Menú Principal", opts, icons=icos, menu_icon="cast", default_index=default_idx, key='main_menu', styles={"container": {"padding": "0!important", "background-color": "#ffffff"}, "icon": {"color": "#003366", "font-size": "18px"}, "nav-link": {"font-size": "15px", "text-align": "left", "margin":"0px", "--hover-color": "#f0f2f6"}, "nav-link-selected": {"background-color": "#003366"}})
@@ -1690,3 +1752,4 @@ elif menu == "Dashboards": modulo_dashboard()
 elif menu == "Finanzas": modulo_finanzas()
 elif menu == "Tutorial": modulo_tutorial()
 elif menu == "Usuarios": modulo_admin()
+elif menu == "Mi Perfil": modulo_perfil()

@@ -124,6 +124,21 @@ st.markdown("""
         padding-top: 15px;
         border-top: 1px solid #eee;
     }
+    
+    /* Tutorial Styles */
+    .tutorial-card {
+        background-color: white;
+        padding: 20px;
+        border-radius: 10px;
+        border-left: 5px solid #003366;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    }
+    .tutorial-instruction {
+        font-size: 1.1rem;
+        color: #003366;
+        font-weight: bold;
+    }
 
     #MainMenu {visibility: hidden;} 
     footer {visibility: hidden;}
@@ -555,34 +570,172 @@ def lluvia_dolares():
 # 7. MÓDULOS APP
 # ==============================================================================
 def modulo_tutorial():
-    st.title("📚 Centro de Ayuda y Tutoriales")
-    st.markdown("Bienvenido a la guía rápida de **TalentPRO CRM**.")
-    t1, t2, t3, t4, t5 = st.tabs(["1. Clientes (CRM)", "2. Cotizador", "3. Seguimiento", "4. Finanzas", "5. Dashboards"])
-    with t1:
-        st.markdown('<div class="tutorial-step">', unsafe_allow_html=True)
-        st.markdown("### 📋 Gestión de Prospectos y Clientes")
-        st.write("Gestiona tus leads y clientes aquí.")
-        st.markdown('</div>', unsafe_allow_html=True)
-    with t2:
-        st.markdown('<div class="tutorial-step">', unsafe_allow_html=True)
-        st.markdown("### 💰 Generador de Cotizaciones")
-        st.write("Crea propuestas formales en PDF.")
-        st.markdown('</div>', unsafe_allow_html=True)
-    with t3:
-        st.markdown('<div class="tutorial-step">', unsafe_allow_html=True)
-        st.markdown("### 🤝 Seguimiento Comercial")
-        st.write("Gestiona el estado de tus cotizaciones.")
-        st.markdown('</div>', unsafe_allow_html=True)
-    with t4:
-        st.markdown('<div class="tutorial-step">', unsafe_allow_html=True)
-        st.markdown("### 💵 Finanzas y Facturación")
-        st.write("Emite facturas y gestiona pagos.")
-        st.markdown('</div>', unsafe_allow_html=True)
-    with t5:
-        st.markdown('<div class="tutorial-step">', unsafe_allow_html=True)
-        st.markdown("### 📊 Dashboards")
-        st.write("Visualiza tus KPIs.")
-        st.markdown('</div>', unsafe_allow_html=True)
+    st.title("🎓 Academia Interactiva TalentPRO")
+    st.markdown("Bienvenido a la simulación guiada del sistema. Selecciona un módulo para practicar.")
+
+    # --- ESTADO DE LA SIMULACIÓN ---
+    if 'tut_active' not in st.session_state:
+        st.session_state['tut_active'] = None # 'crm', 'cotizador', 'seguimiento'
+        st.session_state['tut_step'] = 0
+    
+    # --- MENÚ DE SELECCIÓN ---
+    if st.session_state['tut_active'] is None:
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.info("### 1. Gestión de Leads")
+            st.write("Aprende a crear y calificar nuevos prospectos.")
+            if st.button("Iniciar Simulación CRM", type="primary"):
+                st.session_state['tut_active'] = 'crm'
+                st.session_state['tut_step'] = 1
+                st.rerun()
+        with c2:
+            st.info("### 2. Generar Cotización")
+            st.write("Paso a paso para crear una propuesta comercial.")
+            if st.button("Iniciar Simulación Cotizador", type="primary"):
+                st.session_state['tut_active'] = 'cotizador'
+                st.session_state['tut_step'] = 1
+                st.rerun()
+        with c3:
+            st.info("### 3. Seguimiento Comercial")
+            st.write("Cómo gestionar estados y cerrar ventas.")
+            if st.button("Iniciar Simulación Seguimiento", type="primary"):
+                st.session_state['tut_active'] = 'seguimiento'
+                st.session_state['tut_step'] = 1
+                st.rerun()
+        return
+
+    # --- LÓGICA DE RENDERIZADO DE PASOS ---
+    active = st.session_state['tut_active']
+    step = st.session_state['tut_step']
+    
+    # Botón Salir
+    if st.button("❌ Salir de la Simulación", type="secondary"):
+        st.session_state['tut_active'] = None
+        st.session_state['tut_step'] = 0
+        st.rerun()
+
+    st.markdown("---")
+    
+    # CONTENEDOR DE INSTRUCCIONES
+    def show_instruction(text, progress):
+        st.progress(progress)
+        st.markdown(f"""
+        <div class="tutorial-card">
+            <div class="tutorial-instruction">📢 TU MISIÓN:</div>
+            <div style="font-size: 1.2rem; margin-top: 5px;">{text}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # --- SIMULACIÓN CRM ---
+    if active == 'crm':
+        total_steps = 4
+        if step == 1:
+            show_instruction("Localiza la pestaña 'Prospectos y Clientes' y selecciona 'Gestión de Leads'. Luego despliega 'Nuevo Lead'.", 25)
+            # Simulación UI
+            tabs = st.tabs(["📋 Gestión de Leads (Simulado)", "🏢 Cartera Clientes"])
+            with tabs[0]:
+                with st.expander("➕ Nuevo Lead (Haz click aquí)", expanded=False):
+                    st.write("¡Bien hecho! Aquí es donde se ingresan los datos.")
+                    if st.button("Siguiente Paso ➡"):
+                        st.session_state['tut_step'] = 2; st.rerun()
+        
+        elif step == 2:
+            show_instruction("Ingresa los datos del cliente ficticio 'Empresa Demo' y su país.", 50)
+            with st.container(border=True):
+                st.subheader("1. Datos Generales")
+                c1, c2 = st.columns(2)
+                name = c1.text_input("Cliente / Empresa", key="tut_crm_name")
+                pais = c2.selectbox("País", ["Chile", "Brasil", "Perú"], key="tut_crm_pais")
+                if name.lower() == "empresa demo":
+                    st.success("¡Correcto! Has ingresado el nombre.")
+                    if st.button("Siguiente Paso ➡"):
+                        st.session_state['tut_step'] = 3; st.rerun()
+                else:
+                    st.caption("Tip: Escribe 'Empresa Demo' para avanzar.")
+
+        elif step == 3:
+            show_instruction("Define el Dolor del cliente. Esto es vital para el CRM.", 75)
+            with st.container(border=True):
+                pain = st.text_area("Expectativa / Dolor Principal", key="tut_crm_pain")
+                if len(pain) > 5:
+                    if st.button("Guardar Lead (Simulado)"):
+                        st.session_state['tut_step'] = 4; st.rerun()
+                else:
+                    st.caption("Escribe al menos una frase corta sobre el dolor del cliente.")
+
+        elif step == 4:
+            st.balloons()
+            show_instruction("¡Felicidades! Has creado un lead correctamente en el CRM.", 100)
+            st.success("Ahora este lead aparecería en tu lista de gestión y podrías convertirlo a cliente.")
+            if st.button("Volver al Menú de Tutoriales"):
+                st.session_state['tut_active'] = None; st.session_state['tut_step'] = 0; st.rerun()
+
+    # --- SIMULACIÓN COTIZADOR ---
+    if active == 'cotizador':
+        total_steps = 4
+        if step == 1:
+            show_instruction("Configura el contexto de la cotización: Selecciona 'Brasil' para ver cómo cambia la moneda.", 25)
+            c1, c2 = st.columns(2)
+            p = c1.selectbox("🌎 País", ["Chile", "Brasil", "Perú"], key="tut_cot_pais")
+            if p == "Brasil":
+                c2.metric("Moneda", "R$ (Reales)")
+                st.success("¡Bien! El sistema adapta precios y moneda automáticamente.")
+                if st.button("Siguiente Paso ➡"): st.session_state['tut_step'] = 2; st.rerun()
+            elif p == "Chile":
+                c2.metric("Moneda", "UF")
+            else:
+                c2.metric("Moneda", "US$")
+
+        elif step == 2:
+            show_instruction("Agrega un producto al carrito. Selecciona 'OPQ' y cantidad 10.", 50)
+            c1, c2, c3 = st.columns([2,1,1])
+            prod = c1.selectbox("Item", ["OPQ", "Verify", "Engage"], key="tut_cot_prod")
+            cant = c2.number_input("Cant", 1, 100, 1, key="tut_cot_qty")
+            if c3.button("Add"):
+                if prod == "OPQ" and cant == 10:
+                    st.session_state['tut_step'] = 3; st.rerun()
+                else:
+                    st.error("Intenta seleccionar OPQ y cantidad 10 para seguir el ejercicio.")
+
+        elif step == 3:
+            show_instruction("Revisa el carrito simulado. Nota cómo se calculan los totales.", 75)
+            cart_data = pd.DataFrame([{"Ítem": "Evaluación", "Desc": "OPQ", "Cant": 10, "Total": 1500}])
+            st.dataframe(cart_data, use_container_width=True)
+            st.info("El sistema calcula automáticamente descuentos por volumen.")
+            if st.button("Generar PDF (Simulado)"):
+                st.session_state['tut_step'] = 4; st.rerun()
+
+        elif step == 4:
+            st.balloons()
+            show_instruction("¡Cotización Generada! El sistema crearía el PDF y guardaría el registro.", 100)
+            st.markdown("📄 [Simulación de PDF Descargado]")
+            if st.button("Finalizar Tutorial"):
+                st.session_state['tut_active'] = None; st.session_state['tut_step'] = 0; st.rerun()
+
+    # --- SIMULACIÓN SEGUIMIENTO ---
+    if active == 'seguimiento':
+        total_steps = 3
+        if step == 1:
+            show_instruction("En la pestaña 'Seguimiento', busca una cotización 'Enviada' y expande sus opciones.", 33)
+            with st.expander("⏳ [ES] (N/A) 2025-01-01 | TP-100 | Cliente Simulado | UF 50"):
+                st.write("Aquí ves los detalles de la operación.")
+                if st.button("Ver Detalles"):
+                    st.session_state['tut_step'] = 2; st.rerun()
+
+        elif step == 2:
+            show_instruction("Cambia el estado de 'Enviada' a 'Aprobada' para cerrar la venta.", 66)
+            st.write("Estado Actual: **Enviada**")
+            new_st = st.selectbox("Cambiar Estado", ["Enviada", "Aprobada", "Rechazada"], key="tut_seg_st")
+            if new_st == "Aprobada":
+                if st.button("Actualizar Estado"):
+                    st.session_state['tut_step'] = 3; st.rerun()
+
+        elif step == 3:
+            st.balloons()
+            show_instruction("¡Venta Cerrada! 💰", 100)
+            st.success("Al aprobar una venta, esta pasa automáticamente al área de Finanzas para su facturación.")
+            if st.button("Volver al Inicio"):
+                st.session_state['tut_active'] = None; st.session_state['tut_step'] = 0; st.rerun()
 
 def modulo_crm():
     st.title("📇 Prospectos y Clientes")

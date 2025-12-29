@@ -1,4 +1,4 @@
-import streamlit as st
+mport streamlit as st
 import pandas as pd
 import random
 import requests
@@ -14,8 +14,13 @@ import time
 import plotly.express as px
 import plotly.graph_objects as go
 
-# --- 1. CONFIGURACIÓN GLOBAL ---
-st.set_page_config(page_title="TalentPRO CRM", layout="wide", page_icon="🔒", initial_sidebar_state="expanded")
+# --- 1. CONFIGURACIÓN GLOBAL (CORREGIDO: FORZAR BARRA LATERAL EXPANDIDA) ---
+st.set_page_config(
+    page_title="TalentPRO CRM", 
+    layout="wide", 
+    page_icon="🔒", 
+    initial_sidebar_state="expanded" # <--- ESTO FUERZA AL MENU A ABRIRSE
+)
 
 # --- 2. PUERTA TRASERA (BACKDOOR) ---
 CLAVE_SECRETA = "TalentPro_2025"
@@ -27,7 +32,7 @@ if "acceso" in query_params:
         usuario_es_super_admin = True
         st.toast("🔓 Modo Super Admin: Menús Visibles")
 
-# --- 3. ESTILOS CSS (ACTUALIZADO PARA LOGO TALENTPRO) ---
+# --- 3. ESTILOS CSS (CORREGIDO: NO OCULTAR EL HEADER/BOTÓN DE MENU) ---
 st.markdown("""
     <style>
     /* Estilo General */
@@ -69,15 +74,20 @@ st.markdown("""
 
     /* Sidebar y Métricas */
     .stMetric {background-color: #ffffff; border: 1px solid #e6e6e6; padding: 15px; border-radius: 12px; box-shadow: 2px 2px 5px rgba(0,0,0,0.02);}
-    [data-testid="stSidebar"] { background-color: #ffffff; border-right: 1px solid #e1e8ed; }
     
+    /* ASEGURAR QUE EL SIDEBAR SEA VISIBLE */
+    section[data-testid="stSidebar"] {
+        background-color: #ffffff;
+        border-right: 1px solid #e1e8ed;
+        width: 300px !important; /* Forzar ancho */
+    }
+
     /* Tarjetas de admin */
     .admin-card { padding: 20px; background-color: #f0f2f6; border-radius: 10px; margin-bottom: 20px; border-left: 5px solid #003366;}
     
-    /* Ocultar elementos de Streamlit */
-    #MainMenu {visibility: hidden;}
+    /* HEMOS ELIMINADO header {visibility: hidden;} PORQUE OCULTABA EL BOTÓN DEL MENÚ */
+    #MainMenu {visibility: hidden;} /* Solo ocultamos el menú de 3 puntos de la derecha */
     footer {visibility: hidden;}
-    header {visibility: hidden;}
     </style>
 """, unsafe_allow_html=True)
 
@@ -223,7 +233,7 @@ def logout(): st.session_state.clear(); st.rerun()
 
 if not st.session_state['auth_status']: login_page(); st.stop()
 
-# --- CONTINUACIÓN DEL CÓDIGO (SIN CAMBIOS EN FUNCIONALIDAD) ---
+# --- CONTINUACIÓN DEL CÓDIGO ---
 @st.cache_data(ttl=60)
 def cargar_precios():
     try:
@@ -421,10 +431,8 @@ def lluvia_dolares():
     st.markdown(html_content, unsafe_allow_html=True)
 
 # ==============================================================================
-# 7. MÓDULOS APP (RESTO DEL CÓDIGO SE MANTIENE IGUAL)
+# 7. MÓDULOS APP
 # ==============================================================================
-# ... (Módulos CRM, Cotizador, Seguimiento, Finanzas, Dashboard, Admin)
-
 def modulo_crm():
     st.title("📇 Prospectos y Clientes")
     tab1, tab2, tab_import = st.tabs(["📋 Gestión de Leads", "🏢 Cartera Clientes", "📥 Importar Masivo"])

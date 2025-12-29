@@ -411,8 +411,10 @@ def generar_pdf_final(emp, cli, items, calc, idioma_code, extras):
     pdf.cell(95,5, clean_text(cli['contacto']), 0, 1)
     pdf.set_xy(105,pdf.get_y()); pdf.cell(95,5, clean_text(cli['email']), 0, 1)
     
+    # Limpieza de ID y Fecha
+    date_str = f"Date: {datetime.now().strftime('%d/%m/%Y')} | ID: {extras['id']}"
     pdf.ln(5); pdf.set_xy(105,pdf.get_y()); pdf.set_text_color(0,51,102)
-    pdf.cell(95,5,f"Date: {datetime.now().strftime('%d/%m/%Y')} | ID: {extras['id']}",0,1); pdf.ln(10)
+    pdf.cell(95,5, clean_text(date_str), 0, 1); pdf.ln(10)
     
     # Tabla Items
     pdf.set_fill_color(0,51,102); pdf.set_text_color(255); pdf.set_font("Arial",'B',9)
@@ -440,7 +442,9 @@ def generar_pdf_final(emp, cli, items, calc, idioma_code, extras):
         pdf.set_x(x); pdf.set_font("Arial",'B' if b else '',10); pdf.set_text_color(0 if not b else 255)
         if b: pdf.set_fill_color(0,51,102)
         pdf.cell(35,7, clean_text(l), 0, 0,'R',b)
-        pdf.cell(35,7,f"{mon} {v:,.2f} ",0,1,'R',b)
+        # Limpiamos también el string del valor (por si el símbolo de moneda es raro)
+        val_str = f"{mon} {v:,.2f} "
+        pdf.cell(35,7, clean_text(val_str), 0, 1,'R',b)
         
     r(T['subtotal'], calc['subtotal'])
     if calc['fee']>0: r(T['fee'], calc['fee'])

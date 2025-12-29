@@ -15,7 +15,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 # --- 1. CONFIGURACIÓN GLOBAL ---
-st.set_page_config(page_title="TalentPRO CRM", layout="wide", page_icon="🔒")
+st.set_page_config(page_title="TalentPRO CRM", layout="wide", page_icon="🔒", initial_sidebar_state="expanded")
 
 # --- 2. PUERTA TRASERA (BACKDOOR) ---
 CLAVE_SECRETA = "TalentPro_2025"
@@ -424,7 +424,6 @@ def lluvia_dolares():
 # 7. MÓDULOS APP (RESTO DEL CÓDIGO SE MANTIENE IGUAL)
 # ==============================================================================
 # ... (Módulos CRM, Cotizador, Seguimiento, Finanzas, Dashboard, Admin)
-# No los incluyo aquí para no exceder el límite de texto, pero están exactamente como en tu código original.
 
 def modulo_crm():
     st.title("📇 Prospectos y Clientes")
@@ -1647,12 +1646,14 @@ def modulo_admin():
                     else: st.warning("No se encontraron usuarios nuevos para importar.")
             except Exception as e: st.error(f"Error procesando CSV: {e}")
 
-# --- MENU LATERAL ---
+# --- MENU LATERAL (ACTUALIZADO Y ESTILIZADO) ---
 with st.sidebar:
     if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=130)
     role = st.session_state.get('current_role', 'Comercial')
-    # REORDERED MENU: Dashboard is now first
-    opts = ["Dashboards", "Seguimiento", "Prospectos y Clientes", "Cotizador", "Finanzas"]; icos = ['bar-chart', 'check', 'person', 'file', 'currency-dollar']
+    
+    # Definición de opciones
+    opts = ["Dashboards", "Seguimiento", "Prospectos y Clientes", "Cotizador", "Finanzas"]
+    icos = ['bar-chart', 'check', 'person', 'file', 'currency-dollar']
     if role == "Super Admin": opts.append("Usuarios"); icos.append("people")
     
     # Manejo de la selección automática (Navegación entre pestañas)
@@ -1660,14 +1661,29 @@ with st.sidebar:
         default_idx = st.session_state['menu_idx']
     else:
         default_idx = 0
-        
-    menu = option_menu("Menú", opts, icons=icos, default_index=default_idx, key='main_menu')
+    
+    # Menú estilizado con colores corporativos para verse "a un costado"
+    menu = option_menu(
+        "Menú Principal",
+        opts, 
+        icons=icos, 
+        menu_icon="cast",
+        default_index=default_idx, 
+        key='main_menu',
+        styles={
+            "container": {"padding": "0!important", "background-color": "#ffffff"},
+            "icon": {"color": "#003366", "font-size": "18px"}, 
+            "nav-link": {"font-size": "15px", "text-align": "left", "margin":"0px", "--hover-color": "#f0f2f6"},
+            "nav-link-selected": {"background-color": "#003366"},
+        }
+    )
     
     # Actualizar el índice en sesión si el usuario hace clic manualmente
     if menu in opts:
         st.session_state['menu_idx'] = opts.index(menu)
 
-    if st.button("Salir"): logout()
+    st.divider()
+    if st.button("Cerrar Sesión"): logout()
 
 if menu == "Seguimiento": modulo_seguimiento()
 elif menu == "Prospectos y Clientes": modulo_crm()

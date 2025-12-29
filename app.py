@@ -323,31 +323,52 @@ def calc_paa(c, m):
     if m == "UF": return (b*TASAS['USD_CLP'])/TASAS['UF'] if TASAS['UF'] > 0 else 0
     return b*TASAS['USD_BRL']
 
-# --- MODIFICACIÓN AQUÍ: Función actualizada para manejar Infinito > 1000 ---
+# --- MODIFICACIÓN AQUÍ: Función ROBUSTA con FALLBACK para evitar 0.00 ---
 def calc_xls(df, p, c, l):
     if df.empty: return 0.0
+    
+    # Filtrar por producto exacto
     r = df[df['Producto']==p]
     if r.empty: return 0.0
     
-    # 1. Si la cantidad es mayor a 1000, intentar ir directo a "Infinito"
-    if c > 1000:
-        try:
-            # Intentamos leer la columna "Infinito"
-            val = r.iloc[0]['Infinito']
-            return float(val)
-        except:
-            # Si falla (ej: no existe la columna), dejamos que el loop normal intente resolver
-            pass
-
-    # 2. Lógica estándar por tramos
+    # Definir los tramos (buckets)
     ts = [50,100,200,300,500,1000,'Infinito'] if l else [100,200,300,500,1000,'Infinito']
+    
+    # 1. Determinar cuál es la columna objetivo inicial basada en la cantidad
+    target_col = 'Infinito' # Default
     for t in ts:
         limit = float('inf') if t=='Infinito' else t
         if c <= limit:
-            try: return float(r.iloc[0][t])
-            except: 
-                try: return float(r.iloc[0][str(t)])
-                except: return 0.0
+            target_col = t
+            break
+    
+    # 2. Buscar precio con estrategia de "Retroceso" (Fallback)
+    # Si la columna target_col está vacía, buscamos en el tramo anterior.
+    
+    try:
+        start_idx = ts.index(target_col)
+    except: return 0.0
+    
+    # Iterar desde el tramo actual hacia atrás (ej: si es 1000 y está vacío, mira 500...)
+    for i in range(start_idx, -1, -1):
+        col_name = ts[i]
+        val = None
+        try:
+            # Intento 1: Acceso directo (puede ser int o str según pandas)
+            if col_name in r.columns:
+                val = r.iloc[0][col_name]
+            # Intento 2: Convertir a string
+            elif str(col_name) in r.columns:
+                val = r.iloc[0][str(col_name)]
+            
+            # Validar si encontramos un precio válido
+            if pd.notna(val):
+                float_val = float(val)
+                if float_val > 0:
+                    return float_val
+        except:
+            continue # Si falla conversión, probar el siguiente tramo más bajo
+            
     return 0.0
 
 def get_impuestos(pais, sub, eva):

@@ -323,51 +323,62 @@ def calc_paa(c, m):
     if m == "UF": return (b*TASAS['USD_CLP'])/TASAS['UF'] if TASAS['UF'] > 0 else 0
     return b*TASAS['USD_BRL']
 
-# --- MODIFICACIÓN AQUÍ: Función ROBUSTA con FALLBACK para evitar 0.00 ---
+# --- MODIFICACIÓN AQUÍ: Función basada en "NIVELES ALCANZADOS" (Pisos) ---
 def calc_xls(df, p, c, l):
     if df.empty: return 0.0
     
-    # Filtrar por producto exacto
+    # Filtrar por producto
     r = df[df['Producto']==p]
     if r.empty: return 0.0
     
-    # Definir los tramos (buckets)
-    ts = [50,100,200,300,500,1000,'Infinito'] if l else [100,200,300,500,1000,'Infinito']
+    # 1. Caso Infinito: Si supera 1000, intentamos leer la columna "Infinito"
+    if c > 1000:
+        try:
+            val = float(r.iloc[0]['Infinito'])
+            if val > 0: return val
+        except: 
+            pass # Si falla, caemos a la lógica de tramos inferiores (probablemente 1000)
+
+    # 2. Definir Tramos Numéricos Ordenados de MAYOR a MENOR (Descendente)
+    # Esto es clave: Buscamos el "piso" más alto que el cliente haya alcanzado.
+    tramos = [1000, 500, 300, 200, 100, 50] if l else [1000, 500, 300, 200, 100]
     
-    # 1. Determinar cuál es la columna objetivo inicial basada en la cantidad
-    target_col = 'Infinito' # Default
-    for t in ts:
-        limit = float('inf') if t=='Infinito' else t
-        if c <= limit:
+    target_col = None
+    
+    # Buscar el primer tramo donde la cantidad comprada sea mayor o igual al tramo
+    # Ej: c=903. ¿903 >= 1000? No. ¿903 >= 500? Si. -> Target = 500.
+    for t in tramos:
+        if c >= t:
             target_col = t
             break
-    
-    # 2. Buscar precio con estrategia de "Retroceso" (Fallback)
-    # Si la columna target_col está vacía, buscamos en el tramo anterior.
-    
+            
+    # Si la cantidad es muy pequeña (ej: 10) y no supera ningún tramo, usamos el tramo más chico (base)
+    if target_col is None:
+        target_col = tramos[-1]
+
+    # 3. Obtener el precio con Fallback (Si el tramo 500 está vacío, buscar en el anterior disponible)
     try:
-        start_idx = ts.index(target_col)
+        start_idx = tramos.index(target_col)
     except: return 0.0
     
-    # Iterar desde el tramo actual hacia atrás (ej: si es 1000 y está vacío, mira 500...)
-    for i in range(start_idx, -1, -1):
-        col_name = ts[i]
+    # Recorremos desde el tramo seleccionado hacia abajo buscando un precio válido
+    for i in range(start_idx, len(tramos)):
+        col_name = tramos[i]
         val = None
         try:
-            # Intento 1: Acceso directo (puede ser int o str según pandas)
+            # Intento 1: Acceso directo
             if col_name in r.columns:
                 val = r.iloc[0][col_name]
-            # Intento 2: Convertir a string
+            # Intento 2: Acceso string
             elif str(col_name) in r.columns:
                 val = r.iloc[0][str(col_name)]
-            
-            # Validar si encontramos un precio válido
+                
             if pd.notna(val):
                 float_val = float(val)
                 if float_val > 0:
                     return float_val
         except:
-            continue # Si falla conversión, probar el siguiente tramo más bajo
+            continue
             
     return 0.0
 
@@ -1323,7 +1334,7 @@ def modulo_finanzas():
                                 ent = get_empresa(r['pais'], r['items']); sub = sum(x['Total'] for x in r['items']); tn, tv = get_impuestos(r['pais'], sub, sub); calc = {'subtotal':sub, 'fee':0, 'tax_name':tn, 'tax_val':tv, 'total':r['total']}
                                 pdf = generar_pdf_final(ent, cli, r['items'], calc, idi_saved, ext)
                                 b64 = base64.b64encode(pdf).decode('latin-1')
-                                pdf_links = f'<a href="data:application/pdf;base64,{b64}" download="Cot_{r["id"]}.pdf">📄 Ver PDF Cotización ({idi_saved})</a>'
+                                pdf_links = f'<a href="data:application/pdf;base64,{b64}" download="Cot_{r["id"]}.pdf">📄 Descargar PDF</a>'
                             st.markdown(pdf_links, unsafe_allow_html=True)
                         else: st.warning("⚠️ PDF no disponible.")
                         

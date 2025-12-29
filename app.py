@@ -32,7 +32,7 @@ if "acceso" in query_params:
         usuario_es_super_admin = True
         st.toast("🔓 Modo Super Admin: Menús Visibles")
 
-# --- 3. ESTILOS CSS (MEJORADO: MATTE BLUE & CARRITO) ---
+# --- 3. ESTILOS CSS (MATTE BLUE & CARRITO) ---
 st.markdown("""
     <style>
     /* Estilo General */
@@ -407,41 +407,37 @@ def calc_xls(df, p, c, l):
             
     return 0.0
 
-# --- NUEVA FUNCIÓN PARA RECALCULAR TODO EL CARRITO AL BORRAR/EDITAR ---
+# --- NUEVA FUNCIÓN PARA RECALCULAR TODO EL CARRITO AL BORRAR/EDITAR (VOLUMEN GLOBAL) ---
 def recalc_cart_prices(cart, ctx):
     """
-    Recorre el carrito, agrupa cantidades por producto y actualiza los precios unitarios
-    basándose en el volumen total acumulado actual.
+    Calcula el Volumen GLOBAL de TODAS las evaluaciones y aplica
+    el precio correspondiente a ese volumen global a CADA ítem individual.
     """
     if not cart: return []
     
-    # 1. Calcular volumen total por producto
-    volume_map = {}
+    # 1. Calcular Volumen GLOBAL de evaluaciones (Suma de todo)
+    total_eval_qty = 0
     for item in cart:
         if item['Ítem'] == 'Evaluación':
-            prod_name = item['Desc']
             try:
-                # Extraer número de "x50 (Detalle)"
+                # Extraer número de "x50 (Detalle)" o "x50"
                 qty_str = str(item['Det']).replace('x', '').strip().split('(')[0]
-                qty = int(qty_str)
-            except: qty = 0
-            volume_map[prod_name] = volume_map.get(prod_name, 0) + qty
+                total_eval_qty += int(qty_str)
+            except: pass
             
-    # 2. Actualizar precios
+    # 2. Actualizar precios de cada ítem usando el VOLUMEN GLOBAL
     new_cart = []
     for item in cart:
         new_item = item.copy()
         if item['Ítem'] == 'Evaluación':
             prod_name = item['Desc']
-            total_qty = volume_map.get(prod_name, 0)
-            
             try:
-                # Extraer cantidad de este item específico
+                # Extraer cantidad de este item específico para calcular su subtotal
                 qty_str = str(item['Det']).replace('x', '').strip().split('(')[0]
                 qty_item = int(qty_str)
                 
-                # Calcular nuevo precio unitario con el volumen TOTAL del carrito
-                new_unit = calc_xls(ctx['dp'], prod_name, total_qty, ctx['tipo']=='Loc')
+                # Calcular nuevo precio unitario usando total_eval_qty (GLOBAL)
+                new_unit = calc_xls(ctx['dp'], prod_name, total_eval_qty, ctx['tipo']=='Loc')
                 
                 new_item['Unit'] = new_unit
                 new_item['Total'] = new_unit * qty_item
@@ -765,15 +761,15 @@ def modulo_crm():
         uploaded_file = st.file_uploader("Subir CSV de Leads", type=["csv"])
         if uploaded_file is not None:
             try:
-                try: df_up = pd.read_csv(uploaded_file, sep=None, engine='python')
+                try: df_u = pd.read_csv(uploaded_file, sep=None, engine='python')
                 except:
                     uploaded_file.seek(0)
-                    try: df_up = pd.read_csv(uploaded_file, sep=None, engine='python', encoding='latin-1')
-                    except: uploaded_file.seek(0); df_up = pd.read_csv(uploaded_file, sep=';', encoding='latin-1')
-                st.write("Vista Previa:", df_up.head())
+                    try: df_u = pd.read_csv(uploaded_file, sep=None, engine='python', encoding='latin-1')
+                    except: up_users.seek(0); df_u = pd.read_csv(uploaded_file, sep=';', encoding='latin-1')
+                st.write("Vista Previa:", df_u.head())
                 if st.button("Procesar Importación"):
                     new_entries = []
-                    for _, row in df_up.iterrows():
+                    for _, row in df_u.iterrows():
                         contact_str = f"{row.get('Contacto','')} ({row.get('Email','')})"
                         if 'Telefono' in row and str(row['Telefono']) != 'nan': contact_str += f" - Tel: {row['Telefono']}"
                         new_entries.append({"id": int(time.time()) + random.randint(1, 1000), "Cliente": row.get('Cliente', 'Sin Nombre'), "Area": row.get('Area', 'Importado'), "Pais": row.get('Pais', 'Desconocido'), "Industria": row.get('Industria', 'Otros'), "Web": str(row.get('Web', '')), "Contactos": contact_str, "Origen": row.get('Origen', 'Importación'), "Etapa": row.get('Etapa', 'Prospección'), "Expectativa": row.get('Expectativa', 'Importación Masiva'), "Responsable": st.session_state['current_user'], "Fecha": str(datetime.now().date())})
@@ -781,7 +777,7 @@ def modulo_crm():
                     if github_push_json('url_leads', final_db, st.session_state.get('leads_sha')):
                         st.session_state['leads_db'] = final_db; st.success(f"Se importaron {len(new_entries)} registros correctamente."); time.sleep(1); st.rerun()
                     else: st.error("Error al guardar en GitHub")
-            except Exception as e: st.error(f"Error al leer el archivo: {e}")
+            except Exception as e: st.error(f"Error procesando CSV: {e}")
 
 def modulo_cotizador():
     # --- CHECK FOR EDIT MODE ---
@@ -1292,151 +1288,4 @@ def modulo_admin():
                     hashed = bcrypt.hashpw(new_pass.encode(), bcrypt.gensalt()).decode()
                     users[new_email] = {"name": new_name, "role": new_role, "password_hash": hashed, "equipo": sel_teams, "sub_equipo": sel_sub_team, "meta_rev": 0, "metas_anuales": {}}
                     if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
-                        sync_users_after_update(); st.success(f"Usuario {new_email} creado"); time.sleep(1); st.rerun()
-    with tab_list:
-        c_sel, c_info = st.columns([1, 2])
-        user_keys = [k for k in users.keys() if not k.startswith("_")]
-        with c_sel:
-            st.subheader("Directorio")
-            df_users = pd.DataFrame([{"Email": k, "Nombre": v.get('name'), "Rol": v.get('role')} for k, v in users.items() if not k.startswith("_")])
-            st.dataframe(df_users, use_container_width=True, hide_index=True)
-            st.markdown("---")
-            edit_user = st.selectbox("Seleccionar Usuario a Editar:", user_keys)
-        with c_info:
-            if edit_user:
-                u = users[edit_user]
-                st.subheader(f"Editando: {u.get('name')}")
-                curr_year_admin = datetime.now().year
-                sel_year_meta = st.number_input("Año de Metas:", min_value=2020, max_value=2050, value=curr_year_admin, step=1, key="sy_meta")
-                with st.container(border=True):
-                    st.markdown("##### 👤 Perfil y Células")
-                    c1, c2, c3 = st.columns(3)
-                    new_role_e = c1.selectbox("Rol", ["Comercial", "Finanzas", "Super Admin"], index=["Comercial", "Finanzas", "Super Admin"].index(u.get('role', 'Comercial')))
-                    config_org = users.get('_CONFIG_ORG', {})
-                    team_opts = list(config_org.keys())
-                    curr_teams = get_user_teams_list(u)
-                    valid_defaults = [t for t in curr_teams if t in team_opts]
-                    new_teams_e = c2.multiselect("Células", team_opts, default=valid_defaults)
-                    sub_opts = ["N/A"]
-                    for t in new_teams_e:
-                        if t in config_org: sub_opts += list(config_org[t]['subs'].keys())
-                    curr_sub = u.get('sub_equipo', 'N/A')
-                    idx_sub = sub_opts.index(curr_sub) if curr_sub in sub_opts else 0
-                    new_sub_e = c3.selectbox("Sub Célula", sub_opts, index=idx_sub, key="edit_sub")
-                with st.container(border=True):
-                    st.markdown(f"##### 🎯 Metas Anuales ({sel_year_meta})")
-                    u_metas = u.get('metas_anuales', {})
-                    u_metas_year = u_metas.get(str(sel_year_meta), {})
-                    col_m1, col_m2 = st.columns(2)
-                    m_rev = col_m1.number_input("Facturación ($)", value=float(u_metas_year.get('rev', 0)))
-                    col_c1, col_c2, col_c3 = st.columns(3)
-                    m_big = col_c1.number_input("Grandes (>20k)", value=int(u_metas_year.get('big', 0)))
-                    m_mid = col_c2.number_input("Medianos", value=int(u_metas_year.get('mid', 0)))
-                    m_sml = col_c3.number_input("Chicos", value=int(u_metas_year.get('sml', 0)))
-                if st.button("💾 Guardar Cambios del Usuario", type="primary"):
-                    users[edit_user].update({'role': new_role_e, 'equipo': new_teams_e, 'sub_equipo': new_sub_e})
-                    if 'metas_anuales' not in users[edit_user]: users[edit_user]['metas_anuales'] = {}
-                    users[edit_user]['metas_anuales'][str(sel_year_meta)] = {'rev': m_rev, 'big': m_big, 'mid': m_mid, 'sml': m_sml}
-                    if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
-                        sync_users_after_update(); st.success("Guardado correctamente"); time.sleep(1); st.rerun()
-                with st.expander("🚨 Zona de Seguridad (Contraseña / Eliminar)"):
-                    p1, p2 = st.columns(2)
-                    pass_rst = p1.text_input("Nueva Contraseña", type="password")
-                    if p1.button("Reestablecer Clave"):
-                        if pass_rst:
-                            users[edit_user]['password_hash'] = bcrypt.hashpw(pass_rst.encode(), bcrypt.gensalt()).decode()
-                            if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
-                                sync_users_after_update(); st.success("Clave cambiada")
-                    if edit_user != st.session_state['current_user']:
-                        if p2.button(f"🗑️ Eliminar a {edit_user}", type="primary"):
-                            del users[edit_user]
-                            if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
-                                sync_users_after_update(); st.success("Eliminado"); time.sleep(1); st.rerun()
-                    else: p2.warning("No puedes eliminarte a ti mismo.")
-    with tab_reset:
-        st.error("⚠️ ZONA DE PELIGRO EXTREMO: Aquí puedes borrar datos masivamente.")
-        c1, c2, c3, c4 = st.columns(4)
-        del_leads = c1.checkbox("Borrar TODOS los Leads y Clientes")
-        del_cots = c2.checkbox("Borrar TODAS las Cotizaciones y Ventas")
-        del_teams = c3.checkbox("Borrar Estructura de Equipos")
-        del_metas = c4.checkbox("Resetear Metas de Usuarios")
-        confirm_text = st.text_input("Escribe 'CONFIRMAR' para habilitar el borrado:")
-        if st.button("Ejecutar Limpieza", type="primary", disabled=(confirm_text != "CONFIRMAR")):
-            success = True
-            if del_leads:
-                if github_push_json('url_leads', [], st.session_state.get('leads_sha')):
-                    st.session_state['leads_db'] = []; st.success("Leads eliminados.")
-                else: success = False
-            if del_cots:
-                if github_push_json('url_cotizaciones', [], st.session_state.get('cotizaciones_sha')):
-                    st.session_state['cotizaciones'] = pd.DataFrame(columns=st.session_state['cotizaciones'].columns)
-                    st.success("Cotizaciones eliminadas.")
-                else: success = False
-            if del_teams or del_metas:
-                new_users = st.session_state['users_db'].copy()
-                if del_teams:
-                    new_users['_CONFIG_ORG'] = {}
-                    for k, v in new_users.items():
-                        if k.startswith("_"): continue
-                        v['equipo'] = []
-                        v['sub_equipo'] = 'N/A'
-                if del_metas:
-                    for k, v in new_users.items():
-                        if k.startswith("_"): continue
-                        v['meta_rev'] = 0; v['metas_anuales'] = {}
-                if github_push_json('url_usuarios', new_users, st.session_state.get('users_sha')):
-                    sync_users_after_update(); st.success("Configuraciones reseteadas.")
-                else: success = False
-            if success: st.balloons(); time.sleep(2); st.rerun()
-            else: st.error("Hubo un error al intentar borrar algunos datos.")
-    with tab_import:
-        st.subheader("Importar Usuarios y Estructura (CSV)")
-        st.markdown("##### 1. Descargar Plantilla")
-        df_tem_user = pd.DataFrame([{"email":"usuario@talentpro.com","nombre":"Nombre Apellido","rol":"Comercial","equipo":"Cono Sur","password_inicial":"Talent2025"}])
-        csv_user = df_tem_user.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Descargar Plantilla Usuarios CSV", data=csv_user, file_name="plantilla_usuarios.csv", mime="text/csv")
-        st.markdown("##### 2. Subir Archivo")
-        up_users = st.file_uploader("Cargar CSV de Usuarios", type=["csv"])
-        if up_users:
-            try:
-                try: df_u = pd.read_csv(up_users, sep=None, engine='python')
-                except:
-                    up_users.seek(0)
-                    try: df_u = pd.read_csv(up_users, sep=None, engine='python', encoding='latin-1')
-                    except: up_users.seek(0); df_u = pd.read_csv(up_users, sep=';', encoding='latin-1')
-                st.write("Vista Previa:", df_u.head())
-                if st.button("Procesar Usuarios"):
-                    cnt = 0
-                    for _, row in df_u.iterrows():
-                        em = row['email']
-                        if em not in users:
-                            hashed = bcrypt.hashpw(str(row['password_inicial']).encode(), bcrypt.gensalt()).decode()
-                            users[em] = {"name": row['nombre'], "role": row['rol'], "equipo": [row.get('equipo', 'N/A')], "password_hash": hashed, "meta_rev": 0, "metas_anuales": {}}
-                            cnt += 1
-                    if cnt > 0:
-                        if github_push_json('url_usuarios', users, st.session_state.get('users_sha')):
-                            sync_users_after_update(); st.success(f"{cnt} usuarios importados exitosamente.")
-                    else: st.warning("No se encontraron usuarios nuevos para importar.")
-            except Exception as e: st.error(f"Error procesando CSV: {e}")
-
-# --- MENU LATERAL ---
-with st.sidebar:
-    if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=130)
-    role = st.session_state.get('current_role', 'Comercial')
-    opts = ["Dashboards", "Seguimiento", "Prospectos y Clientes", "Cotizador", "Finanzas", "Tutorial"]
-    icos = ['bar-chart', 'check', 'person', 'file', 'currency-dollar', 'book']
-    if role == "Super Admin": opts.append("Usuarios"); icos.append("people")
-    if st.session_state['menu_idx'] < len(opts): default_idx = st.session_state['menu_idx']
-    else: default_idx = 0
-    menu = option_menu("Menú Principal", opts, icons=icos, menu_icon="cast", default_index=default_idx, key='main_menu', styles={"container": {"padding": "0!important", "background-color": "#ffffff"}, "icon": {"color": "#003366", "font-size": "18px"}, "nav-link": {"font-size": "15px", "text-align": "left", "margin":"0px", "--hover-color": "#f0f2f6"}, "nav-link-selected": {"background-color": "#003366"}})
-    if menu in opts: st.session_state['menu_idx'] = opts.index(menu)
-    st.divider()
-    if st.button("Cerrar Sesión"): logout()
-
-if menu == "Seguimiento": modulo_seguimiento()
-elif menu == "Prospectos y Clientes": modulo_crm()
-elif menu == "Cotizador": modulo_cotizador()
-elif menu == "Dashboards": modulo_dashboard()
-elif menu == "Finanzas": modulo_finanzas()
-elif menu == "Tutorial": modulo_tutorial()
-elif menu == "Usuarios": modulo_admin()
+                        sync_users_after_update(); st.success(f"Usuario {new_email}

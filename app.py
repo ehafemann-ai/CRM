@@ -356,93 +356,64 @@ def calc_paa(c, m):
 # --- FUNCIÓN DE CÁLCULO DE PRECIOS POR TRAMOS (NIVELES) ---
 def calc_xls(df, p, c, l):
     if df.empty: return 0.0
-    
-    # Filtrar por producto
     r = df[df['Producto']==p]
     if r.empty: return 0.0
     
-    # 1. Caso Infinito: Si supera 1000, intentamos leer la columna "Infinito"
     if c > 1000:
         try:
             val = float(r.iloc[0]['Infinito'])
             if val > 0: return val
-        except: 
-            pass # Si falla, caemos a la lógica de tramos inferiores
+        except: pass
 
-    # 2. Definir Tramos Numéricos Ordenados de MAYOR a MENOR (Descendente)
     tramos = [1000, 500, 300, 200, 100, 50] if l else [1000, 500, 300, 200, 100]
-    
     target_col = None
     
-    # Buscar el primer tramo donde la cantidad comprada sea mayor o igual al tramo
     for t in tramos:
         if c >= t:
             target_col = t
             break
             
-    # Si la cantidad es muy pequeña y no supera ningún tramo, usamos el tramo más chico
-    if target_col is None:
-        target_col = tramos[-1]
+    if target_col is None: target_col = tramos[-1]
 
-    # 3. Obtener el precio con Fallback
-    try:
-        start_idx = tramos.index(target_col)
+    try: start_idx = tramos.index(target_col)
     except: return 0.0
     
     for i in range(start_idx, len(tramos)):
         col_name = tramos[i]
         val = None
         try:
-            if col_name in r.columns:
-                val = r.iloc[0][col_name]
-            elif str(col_name) in r.columns:
-                val = r.iloc[0][str(col_name)]
-                
+            if col_name in r.columns: val = r.iloc[0][col_name]
+            elif str(col_name) in r.columns: val = r.iloc[0][str(col_name)]
             if pd.notna(val):
                 float_val = float(val)
-                if float_val > 0:
-                    return float_val
-        except:
-            continue
-            
+                if float_val > 0: return float_val
+        except: continue
     return 0.0
 
-# --- NUEVA FUNCIÓN PARA RECALCULAR TODO EL CARRITO AL BORRAR/EDITAR (VOLUMEN GLOBAL) ---
+# --- RECALCULAR CARRITO CON VOLUMEN GLOBAL ---
 def recalc_cart_prices(cart, ctx):
-    """
-    Calcula el Volumen GLOBAL de TODAS las evaluaciones y aplica
-    el precio correspondiente a ese volumen global a CADA ítem individual.
-    """
     if not cart: return []
     
-    # 1. Calcular Volumen GLOBAL de evaluaciones (Suma de todo)
     total_eval_qty = 0
     for item in cart:
         if item['Ítem'] == 'Evaluación':
             try:
-                # Extraer número de "x50 (Detalle)" o "x50"
                 qty_str = str(item['Det']).replace('x', '').strip().split('(')[0]
                 total_eval_qty += int(qty_str)
             except: pass
             
-    # 2. Actualizar precios de cada ítem usando el VOLUMEN GLOBAL
     new_cart = []
     for item in cart:
         new_item = item.copy()
         if item['Ítem'] == 'Evaluación':
             prod_name = item['Desc']
             try:
-                # Extraer cantidad de este item específico para calcular su subtotal
                 qty_str = str(item['Det']).replace('x', '').strip().split('(')[0]
                 qty_item = int(qty_str)
-                
-                # Calcular nuevo precio unitario usando total_eval_qty (GLOBAL)
                 new_unit = calc_xls(ctx['dp'], prod_name, total_eval_qty, ctx['tipo']=='Loc')
-                
                 new_item['Unit'] = new_unit
                 new_item['Total'] = new_unit * qty_item
             except: pass
-            
         new_cart.append(new_item)
     return new_cart
 
@@ -583,7 +554,6 @@ def lluvia_dolares():
 # ==============================================================================
 # 7. MÓDULOS APP
 # ==============================================================================
-# --- NUEVO MÓDULO TUTORIAL ---
 def modulo_tutorial():
     st.title("📚 Centro de Ayuda y Tutoriales")
     st.markdown("Bienvenido a la guía rápida de **TalentPRO CRM**.")
@@ -995,6 +965,214 @@ def modulo_cotizador():
                 if col_clon.button("💾 Guardar Nueva (Clon)"): guardar_cotizacion(es_update=False)
             else:
                 if st.button("GUARDAR COTIZACIÓN", type="primary"): guardar_cotizacion(es_update=False)
+
+def modulo_seguimiento():
+    st.title("🤝 Seguimiento Comercial (Ventas)")
+    df = st.session_state['cotizaciones']
+    if df.empty: st.info("Sin datos."); return
+    df = df.sort_values('fecha', ascending=False)
+    curr_user = st.session_state['current_user']
+    curr_role = st.session_state.get('current_role', 'Comercial')
+    if curr_role == 'Comercial':
+        my_team = st.session_state['users_db'][curr_user].get('equipo', 'N/A')
+        team_names = [u['name'] for k, u in st.session_state['users_db'].items() if u.get('equipo') == my_team]
+        df = df[df['vendedor'].isin(team_names)]
+    c1, c2 = st.columns([3, 1])
+    with c1: st.info("ℹ️ Gestión: Cambia estado a 'Aprobada' para que Finanzas facture.")
+    with c2: ver_historial = st.checkbox("📂 Ver Historial Completo", value=False)
+    if not ver_historial:
+        df = df[df['estado'].isin(['Enviada', 'Aprobada'])]
+        if df.empty: st.warning("No tienes cotizaciones abiertas.")
+    for i, r in df.iterrows():
+        lang_tag = f"[{r.get('idioma','ES')}]"
+        team_tag = f"({r.get('equipo_asignado', 'N/A')})"
+        label = f"{lang_tag} {team_tag} {r['fecha']} | {r['id']} | {r['empresa']} | {r['moneda']} {r['total']:,.0f}"
+        if r['estado'] == 'Facturada': label += " ✅ (Facturada)"
+        elif r['estado'] == 'Aprobada': label += " 🎉 (Cerrada)"
+        elif r['estado'] == 'Enviada': label += " ⏳ (En Negociación)"
+        with st.expander(label):
+            col_status, col_req, col_act = st.columns([2, 2, 1])
+            with col_status:
+                st.caption("Estado")
+                est_options = ["Enviada", "Aprobada", "Rechazada", "Perdida"]
+                disabled_st = r['estado'] == 'Facturada'
+                current_st = r['estado'] if r['estado'] in est_options else est_options[0]
+                if r['estado'] == 'Facturada': current_st = "Aprobada"
+                new_status = st.selectbox("Estado", est_options, key=f"st_{r['id']}", index=est_options.index(current_st), disabled=disabled_st)
+            with col_req:
+                st.caption("Requisitos")
+                hes_check = st.checkbox("Requiere HES", value=r.get('hes', False), key=f"hs_{r['id']}", disabled=disabled_st)
+                if hes_check: st.warning("⚠️ Requiere HES para facturar.")
+            with col_act:
+                st.caption("Acciones")
+                if st.button("✏️ Modificar / Clonar", key=f"edit_btn_{r['id']}"):
+                    pdf_data = r.get('pdf_data', {}) if isinstance(r.get('pdf_data'), dict) else {}
+                    st.session_state['carrito'] = r.get('items', [])
+                    st.session_state['cot_edit_data'] = {'id_orig': r['id'], 'empresa': r['empresa'], 'pais': r['pais'], 'contacto': pdf_data.get('contacto', ''), 'email': pdf_data.get('email', ''), 'fee': pdf_data.get('fee', 0), 'bank': pdf_data.get('bank', 0), 'desc': pdf_data.get('desc', 0), 'desc_name': pdf_data.get('desc_name', 'Descuento')}
+                    st.session_state['menu_idx'] = 3; st.rerun()
+            if not disabled_st and st.button("Actualizar Estado", key=f"btn_{r['id']}"):
+                st.session_state['cotizaciones'].at[i, 'estado'] = new_status
+                st.session_state['cotizaciones'].at[i, 'hes'] = hes_check
+                if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
+                    if new_status == 'Aprobada': st.balloons()
+                    st.success("Actualizado"); time.sleep(1); st.rerun()
+
+def modulo_finanzas():
+    st.title("💰 Gestión Financiera")
+    df = st.session_state['cotizaciones']
+    if df.empty: st.info("No hay datos."); return
+    required_cols = ['factura_file', 'equipo_asignado', 'hes_num', 'oc', 'items', 'pdf_data']
+    for col in required_cols:
+        if col not in df.columns:
+            if col == 'factura_file' or col == 'items' or col == 'pdf_data': df[col] = None
+            elif col == 'equipo_asignado': df[col] = "N/A"
+            else: df[col] = ""
+    st.session_state['cotizaciones'] = df
+    tab_billing, tab_collection = st.tabs(["📝 Por Facturar (Backlog)", "💵 Historial Facturadas"])
+    with tab_billing:
+        col_header, col_filter = st.columns([3, 1])
+        with col_header: st.subheader("Pendientes de Facturación")
+        to_bill_raw = df[df['estado'] == 'Aprobada'].copy()
+        selected_team_billing = "Todos"
+        if not to_bill_raw.empty:
+            unique_teams = sorted(list(set(to_bill_raw['equipo_asignado'].fillna("N/A").astype(str).unique())))
+            if "N/A" in unique_teams and len(unique_teams) > 1: unique_teams.remove("N/A"); unique_teams.append("N/A")
+            with col_filter: selected_team_billing = st.selectbox("📂 Filtrar por Célula", ["Todos"] + unique_teams)
+        if to_bill_raw.empty: st.success("¡Excelente! No hay pendientes de facturación.")
+        else:
+            if selected_team_billing != "Todos": to_bill = to_bill_raw[to_bill_raw['equipo_asignado'].fillna("N/A").astype(str) == selected_team_billing]
+            else: to_bill = to_bill_raw
+            if to_bill.empty: st.info(f"No hay facturas pendientes para la célula: {selected_team_billing}")
+            else:
+                for i, r in to_bill.iterrows():
+                    with st.container(border=True):
+                        lang_tag = f"[{r.get('idioma','ES')}]"; team_tag = r.get('equipo_asignado', 'N/A')
+                        if not team_tag or team_tag == "nan": team_tag = "N/A"
+                        st.markdown(f"**{lang_tag} {r['empresa']}** | 👥 {team_tag} | ID: {r['id']} | Total: {r['moneda']} {r['total']:,.0f}")
+                        if r.get('hes'): st.error("🚨 REQUISITO: Esta venta requiere N° HES o MIGO.")
+                        if r.get('items') and isinstance(r['items'], list):
+                            cli = {'empresa':r['empresa'], 'contacto':'', 'email':''} 
+                            ext = r.get('pdf_data', {'id':r['id'], 'pais':r['pais'], 'bank':0, 'desc':0})
+                            prod_items = [x for x in r['items'] if x['Ítem']=='Evaluación']
+                            serv_items = [x for x in r['items'] if x['Ítem']=='Servicio']
+                            idi_saved = r.get('idioma', 'ES')
+                            pdf_links = ""
+                            if r['pais'] == "Chile" and prod_items and serv_items:
+                                sub_p = sum(x['Total'] for x in prod_items); tax_p = sub_p*0.19; tot_p = sub_p*1.19
+                                calc_p = {'subtotal':sub_p, 'fee':0, 'tax_name':"IVA", 'tax_val':tax_p, 'total':tot_p}
+                                pdf_p = generar_pdf_final(EMPRESAS['Chile_Pruebas'], cli, prod_items, calc_p, idi_saved, ext)
+                                b64_p = base64.b64encode(pdf_p).decode('latin-1')
+                                sub_s = sum(x['Total'] for x in serv_items); tot_s = sub_s
+                                calc_s = {'subtotal':sub_s, 'fee':0, 'tax_name':"", 'tax_val':0, 'total':tot_s}
+                                pdf_s = generar_pdf_final(EMPRESAS['Chile_Servicios'], cli, serv_items, calc_s, idi_saved, ext)
+                                b64_s = base64.b64encode(pdf_s).decode('latin-1')
+                                pdf_links = f'<a href="data:application/pdf;base64,{b64_p}" download="Cot_{r["id"]}_P.pdf">📄 Ver PDF SpA ({idi_saved})</a> | <a href="data:application/pdf;base64,{b64_s}" download="Cot_{r["id"]}_S.pdf">📄 Ver PDF Ltda ({idi_saved})</a>'
+                            else:
+                                ent = get_empresa(r['pais'], r['items']); sub = sum(x['Total'] for x in r['items']); tn, tv = get_impuestos(r['pais'], sub, sub); calc = {'subtotal':sub, 'fee':0, 'tax_name':tn, 'tax_val':tv, 'total':r['total']}
+                                pdf = generar_pdf_final(ent, cli, r['items'], calc, idi_saved, ext)
+                                b64 = base64.b64encode(pdf).decode('latin-1')
+                                pdf_links = f'<a href="data:application/pdf;base64,{b64}" download="Cot_{r["id"]}.pdf">📄 Ver PDF Cotización ({idi_saved})</a>'
+                            st.markdown(pdf_links, unsafe_allow_html=True)
+                        else: st.warning("⚠️ PDF no disponible.")
+                        col_file, col_dummy = st.columns([1, 1])
+                        uploaded_invoice = col_file.file_uploader("📂 Subir PDF Factura Emitida", type=['pdf'], key=f"up_inv_{r['id']}")
+                        c1, c2, c3, c4 = st.columns(4)
+                        new_oc = c1.text_input("OC", value=r.get('oc',''), key=f"oc_{r['id']}")
+                        new_hes_num = c2.text_input("N° HES", value=r.get('hes_num',''), key=f"hnum_{r['id']}")
+                        new_inv = c3.text_input("N° Factura", key=f"inv_{r['id']}")
+                        if c4.button("Emitir Factura", key=f"bill_{r['id']}", type="primary"):
+                            if not new_inv: st.error("Falta N° Factura"); continue
+                            st.session_state['cotizaciones'].at[i, 'oc'] = new_oc
+                            st.session_state['cotizaciones'].at[i, 'hes_num'] = new_hes_num
+                            st.session_state['cotizaciones'].at[i, 'factura'] = new_inv
+                            st.session_state['cotizaciones'].at[i, 'estado'] = 'Facturada'
+                            if uploaded_invoice:
+                                try:
+                                    inv_b64 = base64.b64encode(uploaded_invoice.read()).decode()
+                                    st.session_state['cotizaciones'].at[i, 'factura_file'] = inv_b64
+                                except Exception as e: st.error(f"Error al procesar el archivo: {e}")
+                            if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
+                                lluvia_dolares(); st.success(f"Factura {new_inv} emitida correctamente!"); time.sleep(3); st.rerun()
+    with tab_collection:
+        st.subheader("Historial y Cobranza")
+        billed = df[df['estado'] == 'Facturada'].copy()
+        if billed.empty: st.info("No hay historial.")
+        else:
+            st.dataframe(billed[['fecha', 'id', 'empresa', 'total', 'moneda', 'oc', 'hes_num', 'factura', 'pago']], use_container_width=True)
+            st.markdown("---"); st.subheader("🔧 Gestión de Factura")
+            inv_list = billed['factura'].unique().tolist()
+            sel_inv = st.selectbox("Seleccionar N° Factura", inv_list)
+            if sel_inv:
+                row_idx = df[df['factura'] == sel_inv].index[0]
+                r_sel = st.session_state['cotizaciones'].iloc[row_idx]
+                st.markdown("##### 📂 Documentación Disponible")
+                col_d_inv, col_d_quote = st.columns(2)
+                with col_d_inv:
+                    if 'factura_file' in r_sel and r_sel['factura_file']:
+                        try:
+                            b64_file = r_sel['factura_file']
+                            if b64_file:
+                                bin_file = base64.b64decode(b64_file)
+                                st.download_button(label=f"📥 Descargar Factura {sel_inv} (PDF)", data=bin_file, file_name=f"Factura_{sel_inv}.pdf", mime="application/pdf", use_container_width=True)
+                        except: st.error("Error al descargar factura.")
+                    else: st.warning("Sin archivo de factura adjunto.")
+                with col_d_quote:
+                    if r_sel.get('items') and isinstance(r_sel['items'], list):
+                        try:
+                            cli_q = {'empresa':r_sel['empresa'], 'contacto':'', 'email':''} 
+                            ext_q = r_sel.get('pdf_data', {'id':r_sel['id'], 'pais':r_sel['pais'], 'bank':0, 'desc':0})
+                            idi_q = r_sel.get('idioma', 'ES')
+                            prod_items_q = [x for x in r_sel['items'] if x['Ítem']=='Evaluación']
+                            serv_items_q = [x for x in r_sel['items'] if x['Ítem']=='Servicio']
+                            if r_sel['pais'] == "Chile" and prod_items_q and serv_items_q:
+                                sub_p = sum(x['Total'] for x in prod_items_q); tax_p = sub_p*0.19; tot_p = sub_p*1.19
+                                calc_p = {'subtotal':sub_p, 'fee':0, 'tax_name':"IVA", 'tax_val':tax_p, 'total':tot_p}
+                                pdf_p = generar_pdf_final(EMPRESAS['Chile_Pruebas'], cli_q, prod_items_q, calc_p, idi_q, ext_q)
+                                sub_s = sum(x['Total'] for x in serv_items_q); tot_s = sub_s
+                                calc_s = {'subtotal':sub_s, 'fee':0, 'tax_name':"", 'tax_val':0, 'total':tot_s}
+                                pdf_s = generar_pdf_final(EMPRESAS['Chile_Servicios'], cli_q, serv_items_q, calc_s, idi_q, ext_q)
+                                col_q1, col_q2 = st.columns(2)
+                                col_q1.download_button("📄 Cot. Productos (SpA)", pdf_p, file_name=f"Cot_{r_sel['id']}_Prod.pdf", mime="application/pdf")
+                                col_q2.download_button("📄 Cot. Servicios (Ltda)", pdf_s, file_name=f"Cot_{r_sel['id']}_Serv.pdf", mime="application/pdf")
+                            else:
+                                ent_q = get_empresa(r_sel['pais'], r_sel['items']); sub_q = sum(x['Total'] for x in r_sel['items']); tn, tv = get_impuestos(r_sel['pais'], sub_q, sub_q); calc_q = {'subtotal':sub_q, 'fee':0, 'tax_name':tn, 'tax_val':tv, 'total':r_sel['total']}
+                                pdf_q = generar_pdf_final(ent_q, cli_q, r_sel['items'], calc_q, idi_q, ext_q)
+                                st.download_button("📄 Descargar Cotización Original", pdf_q, file_name=f"Cot_{r_sel['id']}.pdf", mime="application/pdf", use_container_width=True)
+                        except Exception as e: st.error(f"Error generando cotización: {e}")
+                st.markdown("---")
+                t1, t2, t3 = st.tabs(["💰 Actualizar Pago", "✏️ Corregir Datos", "🚫 Anular Factura"])
+                with t1:
+                    curr_pay = r_sel['pago']
+                    c1, c2 = st.columns([2,1])
+                    new_p = c1.selectbox("Estado Pago", ["Pendiente", "Pagada", "Vencida"], index=["Pendiente", "Pagada", "Vencida"].index(curr_pay))
+                    if c2.button("Actualizar Pago"):
+                        st.session_state['cotizaciones'].at[row_idx, 'pago'] = new_p
+                        github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha'))
+                        st.success("Pago actualizado"); time.sleep(0.5); st.rerun()
+                with t2:
+                    st.info("Edita datos si hubo un error de tipeo.")
+                    e_oc = st.text_input("Corregir OC", value=r_sel['oc'])
+                    e_hes = st.text_input("Corregir HES", value=r_sel['hes_num'])
+                    e_inv = st.text_input("Corregir N° Factura", value=r_sel['factura'])
+                    up_replace = st.file_uploader("Reemplazar PDF Factura (Opcional)", type=['pdf'], key="rep_pdf")
+                    if st.button("Guardar Correcciones"):
+                        st.session_state['cotizaciones'].at[row_idx, 'oc'] = e_oc
+                        st.session_state['cotizaciones'].at[row_idx, 'hes_num'] = e_hes
+                        st.session_state['cotizaciones'].at[row_idx, 'factura'] = e_inv
+                        if up_replace:
+                             b64_rep = base64.b64encode(up_replace.read()).decode()
+                             st.session_state['cotizaciones'].at[row_idx, 'factura_file'] = b64_rep
+                        if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
+                            st.success("Datos corregidos"); time.sleep(1); st.rerun()
+                with t3:
+                    st.error("⚠️ CUIDADO: Esto eliminará la factura y devolverá la cotización a la pestaña 'Por Facturar'.")
+                    if st.button("🗑️ Eliminar Factura (Revertir a Backlog)"):
+                        st.session_state['cotizaciones'].at[row_idx, 'estado'] = 'Aprobada'
+                        st.session_state['cotizaciones'].at[row_idx, 'factura'] = ''
+                        st.session_state['cotizaciones'].at[row_idx, 'pago'] = 'Pendiente'
+                        st.session_state['cotizaciones'].at[row_idx, 'factura_file'] = None 
+                        if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
+                            st.success("Factura eliminada."); time.sleep(1); st.rerun()
 
 def modulo_dashboard():
     st.title("📊 Dashboards & Analytics")

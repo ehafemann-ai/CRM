@@ -1988,4 +1988,3 @@ elif menu == "Dashboards": modulo_dashboard()
 elif menu == "Finanzas": modulo_finanzas()
 elif menu == "Tutorial": modulo_tutorial()
 elif menu == "Usuarios": modulo_admin()
-```

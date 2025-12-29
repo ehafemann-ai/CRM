@@ -239,7 +239,7 @@ def login_page():
             if os.path.exists(LOGO_PATH): 
                 st.image(LOGO_PATH, use_container_width=True)
             
-            st.markdown("<h4 style='color: #003366; margin-bottom: 2rem;'>CRM de Digitalización</h4>", unsafe_allow_html=True)
+            st.markdown("<h4 style='color: #003366; margin-bottom: 2rem;'>CRM TalentPRO</h4>", unsafe_allow_html=True)
             
             with st.form("login_form", clear_on_submit=False):
                 u = st.text_input("Usuario / Email", placeholder="ejemplo@talentpro.com")
@@ -308,7 +308,7 @@ TEXTOS = {
         "client": "Cliente", "sec_prod": "Assessments", "sec_serv": "Servicios",
         "desc": "Descripción", "qty": "Cant", "unit": "Unitario", "total": "Total",
         "subtotal": "Subtotal", "fee": "Fee Admin", "discount": "Descuento", "bank": "Bank Fee",
-        "legal_intl": "Facturación a {pais}. +Impostos retenidos +Gastos OUR.",
+        "legal_intl": "Facturación a {pais}. +Impuestos retenidos + Gastos OUR.",
         "noshow_title": "Política No-Show:", "noshow_text": "Multa 50% inasistencia <24h.",
         "validity": "Validez 30 días"
     },

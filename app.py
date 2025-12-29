@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import random
@@ -14,12 +15,14 @@ import time
 import plotly.express as px
 import plotly.graph_objects as go
 
-# --- 1. CONFIGURACIÓN GLOBAL (CORREGIDO: FORZAR BARRA LATERAL EXPANDIDA) ---
+# --- 1. CONFIGURACIÓN GLOBAL ---
+# "initial_sidebar_state='expanded'" asegura que el menú arranque abierto.
+# El usuario puede cerrarlo manualmente con el botón del encabezado.
 st.set_page_config(
     page_title="TalentPRO CRM", 
     layout="wide", 
     page_icon="🔒", 
-    initial_sidebar_state="expanded" # <--- ESTO FUERZA AL MENU A ABRIRSE AL INICIO
+    initial_sidebar_state="expanded"
 )
 
 # --- 2. PUERTA TRASERA (BACKDOOR) ---
@@ -32,7 +35,7 @@ if "acceso" in query_params:
         usuario_es_super_admin = True
         st.toast("🔓 Modo Super Admin: Menús Visibles")
 
-# --- 3. ESTILOS CSS (CORREGIDO: NO OCULTAR EL HEADER/BOTÓN DE MENU) ---
+# --- 3. ESTILOS CSS ---
 st.markdown("""
     <style>
     /* Estilo General */
@@ -79,17 +82,25 @@ st.markdown("""
     section[data-testid="stSidebar"] {
         background-color: #ffffff;
         border-right: 1px solid #e1e8ed;
-        width: 300px !important; /* Forzar ancho */
+        width: 300px !important;
     }
 
     /* Tarjetas de admin */
     .admin-card { padding: 20px; background-color: #f0f2f6; border-radius: 10px; margin-bottom: 20px; border-left: 5px solid #003366;}
     
-    /* CORRECCIÓN CRÍTICA: NO OCULTAR HEADER COMPLETO */
-    /* header {visibility: hidden;}  <-- ESTA LINEA ERA LA CULPABLE */
+    /* Ocultamos elementos innecesarios de Streamlit pero DEJAMOS el header visible para el botón hamburguesa */
+    #MainMenu {visibility: hidden;} 
+    footer {visibility: hidden;}
     
-    #MainMenu {visibility: hidden;} /* Ocultamos solo el menú de 3 puntos (derecha) */
-    footer {visibility: hidden;} /* Ocultamos footer "Made with Streamlit" */
+    /* Tutorial Styles */
+    .tutorial-step {
+        background-color: white;
+        padding: 20px;
+        border-radius: 10px;
+        border-left: 5px solid #5DADE2;
+        margin-bottom: 15px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -179,7 +190,6 @@ if 'menu_idx' not in st.session_state: st.session_state['menu_idx'] = 0
 LOGO_PATH = "logo_talentpro.jpg"
 @st.cache_resource
 def descargar_logo():
-    # Usamos la URL del logo de TalentPRO
     url_logo = "https://bukwebapp-enterprise-chile.s3.amazonaws.com/talentpro/generals/logo_login/logo_login.jpg"
     if not os.path.exists(LOGO_PATH):
         try:
@@ -190,7 +200,6 @@ def descargar_logo():
 descargar_logo()
 
 def login_page():
-    # Fondo decorativo suave
     st.markdown("""
         <div style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; 
         background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); z-index: -1;"></div>
@@ -199,7 +208,6 @@ def login_page():
     c1, c2, c3 = st.columns([1, 1.2, 1])
     with c2:
         st.markdown("<br><br><br>", unsafe_allow_html=True)
-        # Contenedor visual del formulario
         with st.container():
             st.markdown('<div class="login-container">', unsafe_allow_html=True)
             if os.path.exists(LOGO_PATH): 
@@ -435,6 +443,83 @@ def lluvia_dolares():
 # ==============================================================================
 # 7. MÓDULOS APP
 # ==============================================================================
+# --- NUEVO MÓDULO TUTORIAL ---
+def modulo_tutorial():
+    st.title("📚 Centro de Ayuda y Tutoriales")
+    st.markdown("Bienvenido a la guía rápida de **TalentPRO CRM**. Aquí encontrarás instrucciones paso a paso para utilizar cada módulo del sistema.")
+    
+    t1, t2, t3, t4, t5 = st.tabs(["1. Clientes (CRM)", "2. Cotizador", "3. Seguimiento", "4. Finanzas", "5. Dashboards"])
+    
+    with t1:
+        st.markdown('<div class="tutorial-step">', unsafe_allow_html=True)
+        st.markdown("### 📋 Gestión de Prospectos y Clientes")
+        st.markdown("""
+        Este módulo es el corazón de tu base de datos. Aquí puedes:
+        1. **Crear Leads:** Ingresa nuevos prospectos en la pestaña "Gestión de Leads" > "Nuevo Lead".
+        2. **Seguimiento:** Registra en qué etapa está el cliente (Prospección, Reunión, Propuesta).
+        3. **Convertir a Cliente:** Cuando un lead compra, cambia su estado a "Cliente Activo".
+        4. **Subir Propuestas:** Puedes adjuntar el PDF de la propuesta enviada al lead para tener el historial.
+        5. **Clientes Históricos:** En la pestaña "Cartera Clientes", puedes registrar empresas que ya son clientes antiguos.
+        """)
+        st.info("💡 **Tip:** Mantén siempre actualizada la etapa del lead para que el embudo de ventas en el Dashboard sea real.")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with t2:
+        st.markdown('<div class="tutorial-step">', unsafe_allow_html=True)
+        st.markdown("### 💰 Generador de Cotizaciones")
+        st.markdown("""
+        Herramienta para crear propuestas formales en PDF de manera automática:
+        1. **Configuración:** Selecciona el país (automáticamente ajusta moneda y entidad legal).
+        2. **Cliente:** Elige un cliente existente o escribe uno nuevo (se guardará automáticamente como lead).
+        3. **Agregar Ítems:**
+           - **Assessments:** Selecciona el producto y cantidad. El sistema calcula el precio por volumen acumulado.
+           - **Servicios:** Agrega servicios profesionales, horas de consultoría, etc.
+        4. **Descuentos:** Puedes aplicar descuentos por monto fijo, porcentaje o simular un volumen mayor.
+        5. **Generar:** Al hacer clic en GUARDAR, se genera un PDF descargable y se guarda el registro en el sistema.
+        """)
+        st.warning("⚠️ **Importante:** Si seleccionas Chile, el sistema generará dos PDFs separados si mezclas Productos (SpA) y Servicios (Ltda).")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with t3:
+        st.markdown('<div class="tutorial-step">', unsafe_allow_html=True)
+        st.markdown("### 🤝 Seguimiento Comercial")
+        st.markdown("""
+        Aquí gestionas las cotizaciones que ya enviaste:
+        1. **Ver Estado:** Revisa si tus cotizaciones están "Enviadas", "Aprobadas" o "Rechazadas".
+        2. **Cierre de Venta:** Cuando el cliente acepte, cambia el estado a **"Aprobada"**.
+        3. **Requisitos:** Si el cliente requiere HES u Orden de Compra (OC), marca la casilla correspondiente.
+        4. **Editar:** Si necesitas cambiar algo de una cotización enviada, usa el botón "✏️ Modificar/Clonar" para llevarla de vuelta al Cotizador.
+        """)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with t4:
+        st.markdown('<div class="tutorial-step">', unsafe_allow_html=True)
+        st.markdown("### 💵 Finanzas y Facturación")
+        st.markdown("""
+        Módulo para el equipo administrativo o para cerrar el ciclo de venta:
+        1. **Por Facturar (Backlog):** Aquí aparecen todas las cotizaciones "Aprobadas".
+        2. **Emitir Factura:**
+           - Ingresa el número de OC y HES (si aplica).
+           - Ingresa el número de Factura real.
+           - **Sube el PDF de la factura** para respaldo.
+           - Haz clic en "Emitir Factura".
+        3. **Historial:** En la segunda pestaña verás todo lo facturado y podrás marcar si ya fue "Pagada".
+        """)
+        st.success("🎉 **Efecto:** Al emitir una factura, ¡verás una lluvia de dólares en la pantalla!")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with t5:
+        st.markdown('<div class="tutorial-step">', unsafe_allow_html=True)
+        st.markdown("### 📊 Dashboards")
+        st.markdown("""
+        Visualiza el rendimiento del negocio:
+        1. **Filtros:** Usa la barra lateral para filtrar por Año.
+        2. **KPIs:** Revisa Ventas Totales, Pipeline, Tasa de Cierre.
+        3. **Metas:** Cada vendedor puede ver su progreso vs la meta anual asignada.
+        4. **Líderes:** Los líderes de célula pueden ver el rendimiento acumulado de su equipo.
+        """)
+        st.markdown('</div>', unsafe_allow_html=True)
+
 def modulo_crm():
     st.title("📇 Prospectos y Clientes")
     tab1, tab2, tab_import = st.tabs(["📋 Gestión de Leads", "🏢 Cartera Clientes", "📥 Importar Masivo"])
@@ -1656,14 +1741,15 @@ def modulo_admin():
                     else: st.warning("No se encontraron usuarios nuevos para importar.")
             except Exception as e: st.error(f"Error procesando CSV: {e}")
 
-# --- MENU LATERAL (ACTUALIZADO Y ESTILIZADO) ---
+# --- MENU LATERAL ---
 with st.sidebar:
     if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=130)
     role = st.session_state.get('current_role', 'Comercial')
     
-    # Definición de opciones
-    opts = ["Dashboards", "Seguimiento", "Prospectos y Clientes", "Cotizador", "Finanzas"]
-    icos = ['bar-chart', 'check', 'person', 'file', 'currency-dollar']
+    # OPCIONES DEL MENÚ
+    opts = ["Dashboards", "Seguimiento", "Prospectos y Clientes", "Cotizador", "Finanzas", "Tutorial"]
+    icos = ['bar-chart', 'check', 'person', 'file', 'currency-dollar', 'book']
+    
     if role == "Super Admin": opts.append("Usuarios"); icos.append("people")
     
     # Manejo de la selección automática (Navegación entre pestañas)
@@ -1700,4 +1786,5 @@ elif menu == "Prospectos y Clientes": modulo_crm()
 elif menu == "Cotizador": modulo_cotizador()
 elif menu == "Dashboards": modulo_dashboard()
 elif menu == "Finanzas": modulo_finanzas()
+elif menu == "Tutorial": modulo_tutorial()
 elif menu == "Usuarios": modulo_admin()

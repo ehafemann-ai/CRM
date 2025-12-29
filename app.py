@@ -792,6 +792,18 @@ def modulo_cotizador():
     else: idx_cli = clientes_list.index(default_emp) if default_emp in clientes_list else 0; emp = cc1.selectbox(txt['client'], [""] + clientes_list, index=idx_cli + 1 if default_emp in clientes_list else 0)
     con = cc2.text_input("Contacto", value=default_con); ema = cc3.text_input("Email", value=default_ema)
     ven = cc4.text_input("Ejecutivo", value=st.session_state['users_db'][st.session_state['current_user']].get('name',''), disabled=True)
+    
+    # --- NUEVA SECCIÓN: DATOS CRM (SI ES CLIENTE NUEVO) ---
+    new_pain = ""
+    new_reason = "Cotizador"
+    if use_new_client:
+        st.markdown("---")
+        st.caption("📝 Datos para CRM (Nuevo Prospecto)")
+        c_nc1, c_nc2 = st.columns(2)
+        new_pain = c_nc1.text_area("Dolor Principal / Expectativa", placeholder="Ej: Alta rotación, buscan digitalizar selección...")
+        new_reason = c_nc2.selectbox("Origen / Razón", ["Prospección del Usuario", "Referido", "Licitación", "SHL", "Otro"], index=0)
+    # ------------------------------------------------------
+
     st.markdown("---"); tp, ts = st.tabs([txt['sec_prod'], txt['sec_serv']])
     with tp:
         c1,c2,c3,c4 = st.columns([3,1,1,1]); lp = ctx['dp']['Producto'].unique().tolist() if not ctx['dp'].empty else []
@@ -918,9 +930,27 @@ def modulo_cotizador():
                 current_leads = st.session_state['leads_db']
                 exists = any(l['Cliente'].lower() == emp.lower() for l in current_leads)
                 if not exists and emp:
-                    new_auto_lead = {"id": int(time.time()), "Cliente": emp, "Area": "Auto-Creado", "Pais": ps, "Industria": "Otros", "Web": "", "Contactos": f"{con} ({ema})", "Origen": "Cotizador", "Etapa": "Propuesta", "Expectativa": "Generado desde Cotizador", "Responsable": st.session_state['current_user'], "Fecha": str(datetime.now().date())}
+                    # USAMOS LOS VALORES DE LA NUEVA SECCIÓN
+                    val_expectativa = new_pain if new_pain else "Generado desde Cotizador"
+                    val_origen = new_reason if new_reason else "Cotizador"
+                    
+                    new_auto_lead = {
+                        "id": int(time.time()), 
+                        "Cliente": emp, 
+                        "Area": "Auto-Creado", 
+                        "Pais": ps, 
+                        "Industria": "Otros", 
+                        "Web": "", 
+                        "Contactos": f"{con} ({ema})", 
+                        "Origen": val_origen, # Actualizado
+                        "Etapa": "Propuesta", 
+                        "Expectativa": val_expectativa, # Actualizado
+                        "Responsable": st.session_state['current_user'], 
+                        "Fecha": str(datetime.now().date())
+                    }
                     st.session_state['leads_db'].append(new_auto_lead)
                     github_push_json('url_leads', st.session_state['leads_db'], st.session_state.get('leads_sha'))
+                
                 nid = edit_data['id_orig'] if (es_update and edit_data) else f"TP-{random.randint(1000,9999)}"
                 cli={'empresa':emp,'contacto':con,'email':ema}
                 ext={'fee':vfee,'bank':bnk,'desc':dsc,'desc_name':dsc_name, 'pais':ps,'id':nid}

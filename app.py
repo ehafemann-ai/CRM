@@ -323,13 +323,27 @@ def calc_paa(c, m):
     if m == "UF": return (b*TASAS['USD_CLP'])/TASAS['UF'] if TASAS['UF'] > 0 else 0
     return b*TASAS['USD_BRL']
 
+# --- MODIFICACIÓN AQUÍ: Función actualizada para manejar Infinito > 1000 ---
 def calc_xls(df, p, c, l):
     if df.empty: return 0.0
     r = df[df['Producto']==p]
     if r.empty: return 0.0
+    
+    # 1. Si la cantidad es mayor a 1000, intentar ir directo a "Infinito"
+    if c > 1000:
+        try:
+            # Intentamos leer la columna "Infinito"
+            val = r.iloc[0]['Infinito']
+            return float(val)
+        except:
+            # Si falla (ej: no existe la columna), dejamos que el loop normal intente resolver
+            pass
+
+    # 2. Lógica estándar por tramos
     ts = [50,100,200,300,500,1000,'Infinito'] if l else [100,200,300,500,1000,'Infinito']
     for t in ts:
-        if c <= (float('inf') if t=='Infinito' else t):
+        limit = float('inf') if t=='Infinito' else t
+        if c <= limit:
             try: return float(r.iloc[0][t])
             except: 
                 try: return float(r.iloc[0][str(t)])
@@ -1201,57 +1215,72 @@ def modulo_finanzas():
     df = st.session_state['cotizaciones']
     if df.empty: st.info("No hay datos."); return
     
-    # Aseguramos que exista la columna para el archivo de la factura
-    if 'factura_file' not in df.columns:
-        df['factura_file'] = None
-        st.session_state['cotizaciones'] = df
+    # --- BLOQUE DE SEGURIDAD: Asegurar columnas nuevas ---
+    # Esto evita errores si la sesión del navegador es antigua
+    required_cols = ['factura_file', 'equipo_asignado', 'hes_num', 'oc', 'items', 'pdf_data']
+    for col in required_cols:
+        if col not in df.columns:
+            if col == 'factura_file' or col == 'items' or col == 'pdf_data':
+                df[col] = None
+            elif col == 'equipo_asignado':
+                df[col] = "N/A"
+            else:
+                df[col] = ""
+    st.session_state['cotizaciones'] = df
+    # -----------------------------------------------------
 
     tab_billing, tab_collection = st.tabs(["📝 Por Facturar (Backlog)", "💵 Historial Facturadas"])
     
     # --- PESTAÑA 1: POR FACTURAR ---
     with tab_billing:
-        # Layout para el título y el filtro lado a lado
-        col_title, col_filter = st.columns([2, 1])
-        with col_title:
+        # Layout del encabezado con filtros
+        col_header, col_filter = st.columns([3, 1])
+        
+        with col_header:
             st.subheader("Pendientes de Facturación")
-        
-        # Filtramos primero solo las aprobadas
-        to_bill_raw = df[df['estado'] == 'Aprobada']
-        
-        if to_bill_raw.empty:
-            st.success("¡Excelente! No hay pendientes.")
-        else:
-            # Obtener lista de células/equipos disponibles en el backlog
-            available_teams = to_bill_raw['equipo_asignado'].fillna("N/A").unique().tolist()
-            available_teams.sort()
-            # Agregar opción 'Todos' al principio
-            options_teams = ["Todos"] + available_teams
             
+        # Filtramos las aprobadas base
+        to_bill_raw = df[df['estado'] == 'Aprobada'].copy()
+        
+        # Lógica del Filtro
+        selected_team_billing = "Todos"
+        if not to_bill_raw.empty:
+            # Obtener equipos únicos, convirtiendo a string para evitar errores con Nones
+            unique_teams = sorted(list(set(to_bill_raw['equipo_asignado'].fillna("N/A").astype(str).unique())))
+            if "N/A" in unique_teams and len(unique_teams) > 1:
+                # Mover N/A al final por estética
+                unique_teams.remove("N/A")
+                unique_teams.append("N/A")
+                
             with col_filter:
-                sel_team_billing = st.selectbox("📂 Filtrar por Célula", options_teams)
-            
-            # Aplicar filtro según selección
-            if sel_team_billing != "Todos":
-                # Si selecciona "N/A", filtramos los nulos o vacíos
-                if sel_team_billing == "N/A":
-                    to_bill = to_bill_raw[to_bill_raw['equipo_asignado'].isna() | (to_bill_raw['equipo_asignado'] == "N/A") | (to_bill_raw['equipo_asignado'] == "")]
-                else:
-                    to_bill = to_bill_raw[to_bill_raw['equipo_asignado'] == sel_team_billing]
+                selected_team_billing = st.selectbox("📂 Filtrar por Célula", ["Todos"] + unique_teams)
+
+        # Mostrar resultados
+        if to_bill_raw.empty:
+            st.success("¡Excelente! No hay pendientes de facturación.")
+        else:
+            # Aplicar filtro seleccionado
+            if selected_team_billing != "Todos":
+                # Filtramos asegurando que la comparación sea entre strings
+                to_bill = to_bill_raw[to_bill_raw['equipo_asignado'].fillna("N/A").astype(str) == selected_team_billing]
             else:
                 to_bill = to_bill_raw
 
             if to_bill.empty:
-                st.info(f"No hay facturación pendiente para la célula: {sel_team_billing}")
+                st.info(f"No hay facturas pendientes para la célula: {selected_team_billing}")
             else:
                 for i, r in to_bill.iterrows():
-                    with st.container(border=True): # Usamos un borde para separar cada ítem
+                    with st.container(border=True):
+                        # Etiquetas Visuales
                         lang_tag = f"[{r.get('idioma','ES')}]"
-                        team_label = f" | 👥 {r.get('equipo_asignado','N/A')}"
-                        st.markdown(f"**{lang_tag} {r['empresa']}** {team_label} | ID: {r['id']} | Total: {r['moneda']} {r['total']:,.0f}")
+                        team_tag = r.get('equipo_asignado', 'N/A')
+                        if not team_tag or team_tag == "nan": team_tag = "N/A"
+                        
+                        st.markdown(f"**{lang_tag} {r['empresa']}** | 👥 {team_tag} | ID: {r['id']} | Total: {r['moneda']} {r['total']:,.0f}")
                         
                         if r.get('hes'): st.error("🚨 REQUISITO: Esta venta requiere N° HES o MIGO.")
                         
-                        # Generación de Links PDF (Código original mantenido)
+                        # Generación de Links PDF
                         if r.get('items') and isinstance(r['items'], list):
                             cli = {'empresa':r['empresa'], 'contacto':'', 'email':''} 
                             ext = r.get('pdf_data', {'id':r['id'], 'pais':r['pais'], 'bank':0, 'desc':0})
@@ -1959,3 +1988,4 @@ elif menu == "Dashboards": modulo_dashboard()
 elif menu == "Finanzas": modulo_finanzas()
 elif menu == "Tutorial": modulo_tutorial()
 elif menu == "Usuarios": modulo_admin()
+```

@@ -464,6 +464,45 @@ def convert_to_usd(row):
     if m == 'R$': return v / TASAS['USD_BRL'] if TASAS['USD_BRL'] > 0 else 0
     return 0
 
+# --- HELPER: SEGURIDAD Y PERMISOS ---
+def get_allowed_users_for_current_session():
+    """
+    Retorna una tupla (lista_emails, lista_nombres) de los usuarios que el usuario actual
+    tiene permiso de ver.
+    - Super Admin: Ve a todos.
+    - Comercial: Se ve a sí mismo y a los miembros de su(s) célula(s).
+    """
+    current_email = st.session_state['current_user']
+    user_db = st.session_state['users_db']
+    curr_data = user_db.get(current_email, {})
+    role = curr_data.get('role', 'Comercial')
+    
+    # 1. Si es Super Admin, retorna None (indicando "todos")
+    if role == 'Super Admin':
+        return None, None
+    
+    # 2. Si es Comercial, buscar su equipo
+    my_teams = get_user_teams_list(curr_data)
+    
+    allowed_emails = {current_email} # Set para evitar duplicados
+    
+    # Buscar otros usuarios que compartan al menos un equipo
+    for u_email, u_data in user_db.items():
+        if u_email.startswith("_"): continue
+        u_teams = get_user_teams_list(u_data)
+        # Intersección de listas: si comparten equipo, lo agrego
+        if any(t in my_teams for t in u_teams):
+            allowed_emails.add(u_email)
+            
+    # Convertir a lista de nombres (para el filtro de 'vendedor' en cotizaciones)
+    allowed_names = []
+    for em in allowed_emails:
+        if em in user_db:
+            name = user_db[em].get('name', '')
+            if name: allowed_names.append(name)
+            
+    return list(allowed_emails), allowed_names
+
 # --- PDF ENGINE ---
 def clean_text(text):
     if text is None: return ""
@@ -739,7 +778,30 @@ def modulo_tutorial():
 
 def modulo_crm():
     st.title("📇 Prospectos y Clientes")
+    
+    # 1. OBTENER USUARIOS PERMITIDOS
+    allowed_emails, allowed_names = get_allowed_users_for_current_session()
+    
+    # 2. FILTRAR LA BASE DE DATOS
+    all_leads = st.session_state['leads_db']
+    visible_leads = []
+    
+    # Si es Super Admin (None), ve todo.
+    if allowed_emails is None:
+        visible_leads = all_leads
+    else:
+        # Si es Comercial, filtra por Responsable (email)
+        # Nota: Asumimos que 'Responsable' guarda el email del creador
+        for l in all_leads:
+            resp = l.get('Responsable', '')
+            if resp in allowed_emails:
+                visible_leads.append(l)
+    
+    # Excluir Clientes ya ganados de la vista de "Leads Activos"
+    leads_activos = [l for l in visible_leads if l.get('Etapa') not in ['Cliente Activo', 'Cerrado Ganado'] and l.get('Area') != 'Cartera']
+
     tab1, tab2, tab_import = st.tabs(["📋 Gestión de Leads", "🏢 Cartera Clientes", "📥 Importar Masivo"])
+    
     with tab1:
         with st.expander("➕ Nuevo Lead", expanded=False):
             with st.form("form_lead"):
@@ -771,11 +833,11 @@ def modulo_crm():
                     else: st.error("Error al guardar en GitHub")
         st.divider()
         st.subheader("🖊️ Gestionar / Editar Lead")
-        visible_leads = [l for l in st.session_state['leads_db'] if l.get('Etapa') not in ['Cliente Activo', 'Cerrado Ganado'] and l.get('Area') != 'Cartera']
-        if not visible_leads:
-            st.info("No hay leads activos (no clientes) registrados.")
+        
+        if not leads_activos:
+            st.info("No hay leads activos visibles para ti.")
         else:
-            lead_names = [l.get('Cliente', 'Sin Nombre') for l in visible_leads]
+            lead_names = [l.get('Cliente', 'Sin Nombre') for l in leads_activos]
             sel_lead_name = st.selectbox("Seleccionar Lead para gestionar", [""] + sorted(list(set(lead_names))))
             if sel_lead_name:
                 lead_idx = next((i for i, d in enumerate(st.session_state['leads_db']) if d["Cliente"] == sel_lead_name), None)
@@ -827,7 +889,8 @@ def modulo_crm():
                                 except Exception as e: st.error(f"Error procesando archivo: {e}")
             st.divider()
             st.caption("Lista de leads visibles (No Clientes):")
-            st.dataframe(pd.DataFrame(visible_leads), use_container_width=True)
+            st.dataframe(pd.DataFrame(leads_activos), use_container_width=True)
+            
     with tab2:
         with st.expander("➕ Registrar Cliente Existente / Histórico", expanded=False):
              with st.form("form_existing_client"):
@@ -845,14 +908,32 @@ def modulo_crm():
                          if github_push_json('url_leads', new_db_ex, st.session_state.get('leads_sha')):
                              st.session_state['leads_db'] = new_db_ex; st.success(f"Cliente {e_name} agregado a la cartera."); time.sleep(1); st.rerun()
                      else: st.error("Falta el nombre de la empresa")
-        leads_db = st.session_state['leads_db']
-        clients_from_db = [l['Cliente'] for l in leads_db if l.get('Etapa') in ['Cliente Activo', 'Cerrado Ganado'] or l.get('Area') == 'Cartera']
+        
+        # Filtro de clientes: solo mostrar los permitidos
+        clients_db_visible = [l for l in visible_leads if l.get('Etapa') in ['Cliente Activo', 'Cerrado Ganado'] or l.get('Area') == 'Cartera']
+        
+        # Cotizaciones visibles para extraer clientes
         df_cots = st.session_state['cotizaciones']
-        clients_with_sales = df_cots[df_cots['estado'].isin(['Aprobada', 'Facturada'])]['empresa'].unique().tolist()
-        real_clients_list = sorted(list(set(clients_from_db + clients_with_sales)))
+        allowed_emails_c, allowed_names_c = get_allowed_users_for_current_session()
+        
+        if allowed_names_c is not None:
+             df_cots_vis = df_cots[df_cots['vendedor'].isin(allowed_names_c)]
+        else:
+             df_cots_vis = df_cots
+             
+        clients_with_sales = df_cots_vis[df_cots_vis['estado'].isin(['Aprobada', 'Facturada'])]['empresa'].unique().tolist()
+        
+        real_clients_list = sorted(list(set([c['Cliente'] for c in clients_db_visible] + clients_with_sales)))
+        
         sel = st.selectbox("Ver Cliente 360 (Solo Clientes)", [""] + real_clients_list)
         if sel:
+            # Mostrar datos solo si tengo permiso
             df = st.session_state['cotizaciones']; dfc = df[df['empresa']==sel]
+            
+            # FILTRAR LAS COTIZACIONES DEL CLIENTE TAMBIEN
+            if allowed_names_c is not None:
+                dfc = dfc[dfc['vendedor'].isin(allowed_names_c)]
+
             tot = dfc['total'].sum() if not dfc.empty else 0
             fac_cli = dfc[dfc['estado']=='Facturada']['total'].sum() if not dfc.empty else 0
             pag_cli = dfc[(dfc['estado']=='Facturada') & (dfc['pago']=='Pagada')]['total'].sum() if not dfc.empty else 0
@@ -1154,12 +1235,14 @@ def modulo_seguimiento():
     df = st.session_state['cotizaciones']
     if df.empty: st.info("Sin datos."); return
     df = df.sort_values('fecha', ascending=False)
-    curr_user = st.session_state['current_user']
-    curr_role = st.session_state.get('current_role', 'Comercial')
-    if curr_role == 'Comercial':
-        my_team = st.session_state['users_db'][curr_user].get('equipo', 'N/A')
-        team_names = [u['name'] for k, u in st.session_state['users_db'].items() if u.get('equipo') == my_team]
-        df = df[df['vendedor'].isin(team_names)]
+    
+    # 1. FILTRO DE SEGURIDAD (PERMISOS)
+    allowed_emails, allowed_names = get_allowed_users_for_current_session()
+    
+    # Si allowed_names es None, es Super Admin (ve todo). Si no, filtra.
+    if allowed_names is not None:
+        df = df[df['vendedor'].isin(allowed_names)]
+
     c1, c2 = st.columns([3, 1])
     with c1: st.info("ℹ️ Gestión: Cambia estado a 'Aprobada' para que Finanzas facture.")
     with c2: ver_historial = st.checkbox("📂 Ver Historial Completo", value=False)
@@ -1407,6 +1490,19 @@ def modulo_dashboard():
     else: 
         df_leads_filtered = df_leads
 
+    # 5. --- FILTRO DE SEGURIDAD PARA DASHBOARD ---
+    # Esto soluciona que un Comercial vea los datos de todos
+    allowed_emails, allowed_names = get_allowed_users_for_current_session()
+    
+    # Si allowed_names NO es None, aplicamos filtro
+    if allowed_names is not None:
+        if not df_cots_filtered.empty:
+            df_cots_filtered = df_cots_filtered[df_cots_filtered['vendedor'].isin(allowed_names)]
+        
+        if not df_leads_filtered.empty:
+            # Filtro leads por Responsable (email)
+            df_leads_filtered = df_leads_filtered[df_leads_filtered['Responsable'].isin(allowed_emails)]
+
     users = st.session_state['users_db']
     curr_email = st.session_state['current_user']
     curr_role = st.session_state.get('current_role', 'Comercial')
@@ -1428,7 +1524,10 @@ def modulo_dashboard():
         with all_tabs[0]:
             st.markdown("### 🌍 Visión Global de la Empresa")
             
-            # Cálculo de Métricas Globales
+            # Nota: Aquí usamos el DF SIN FILTRAR (el original st.session_state) pero filtrado por fecha
+            # porque el Super Admin quiere ver TODO.
+            # Como allowed_names es None para Super Admin, df_cots_filtered ya tiene todo.
+            
             if not df_cots_filtered.empty:
                 df_cots_filtered['Total_USD_Global'] = df_cots_filtered.apply(convert_to_usd, axis=1)
                 
@@ -1555,6 +1654,8 @@ def modulo_dashboard():
                         if team_goal_rev == 0: team_goal_rev = float(team_config_db[team_name].get('meta', 0))
                     
                     team_members = [d['name'] for e,d in users.items() if team_name in get_user_teams_list(d)]
+                    
+                    # Filtramos aqui tambien pero usando el df ya filtrado por seguridad
                     df_team_sales = df_cots_filtered[(df_cots_filtered['vendedor'].isin(team_members)) & (df_cots_filtered['estado'] == 'Facturada')].copy()
                     
                     if not df_team_sales.empty:

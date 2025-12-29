@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import random
@@ -1211,77 +1210,107 @@ def modulo_finanzas():
     
     # --- PESTAÑA 1: POR FACTURAR ---
     with tab_billing:
-        st.subheader("Pendientes de Facturación")
-        to_bill = df[df['estado'] == 'Aprobada']
-        if to_bill.empty: st.success("¡Excelente! No hay pendientes.")
+        # Layout para el título y el filtro lado a lado
+        col_title, col_filter = st.columns([2, 1])
+        with col_title:
+            st.subheader("Pendientes de Facturación")
+        
+        # Filtramos primero solo las aprobadas
+        to_bill_raw = df[df['estado'] == 'Aprobada']
+        
+        if to_bill_raw.empty:
+            st.success("¡Excelente! No hay pendientes.")
         else:
-            for i, r in to_bill.iterrows():
-                with st.container(border=True): # Usamos un borde para separar cada ítem
-                    lang_tag = f"[{r.get('idioma','ES')}]"
-                    st.markdown(f"**{lang_tag} {r['empresa']}** | ID: {r['id']} | Total: {r['moneda']} {r['total']:,.0f}")
-                    
-                    if r.get('hes'): st.error("🚨 REQUISITO: Esta venta requiere N° HES o MIGO.")
-                    
-                    # Generación de Links PDF (Código original mantenido)
-                    if r.get('items') and isinstance(r['items'], list):
-                        cli = {'empresa':r['empresa'], 'contacto':'', 'email':''} 
-                        ext = r.get('pdf_data', {'id':r['id'], 'pais':r['pais'], 'bank':0, 'desc':0})
-                        prod_items = [x for x in r['items'] if x['Ítem']=='Evaluación']
-                        serv_items = [x for x in r['items'] if x['Ítem']=='Servicio']
-                        idi_saved = r.get('idioma', 'ES')
-                        pdf_links = ""
-                        if r['pais'] == "Chile" and prod_items and serv_items:
-                             sub_p = sum(x['Total'] for x in prod_items); tax_p = sub_p*0.19; tot_p = sub_p*1.19
-                             calc_p = {'subtotal':sub_p, 'fee':0, 'tax_name':"IVA", 'tax_val':tax_p, 'total':tot_p}
-                             pdf_p = generar_pdf_final(EMPRESAS['Chile_Pruebas'], cli, prod_items, calc_p, idi_saved, ext)
-                             b64_p = base64.b64encode(pdf_p).decode('latin-1')
-                             sub_s = sum(x['Total'] for x in serv_items); tot_s = sub_s
-                             calc_s = {'subtotal':sub_s, 'fee':0, 'tax_name':"", 'tax_val':0, 'total':tot_s}
-                             pdf_s = generar_pdf_final(EMPRESAS['Chile_Servicios'], cli, serv_items, calc_s, idi_saved, ext)
-                             b64_s = base64.b64encode(pdf_s).decode('latin-1')
-                             pdf_links = f'<a href="data:application/pdf;base64,{b64_p}" download="Cot_{r["id"]}_P.pdf">📄 Ver PDF SpA ({idi_saved})</a> | <a href="data:application/pdf;base64,{b64_s}" download="Cot_{r["id"]}_S.pdf">📄 Ver PDF Ltda ({idi_saved})</a>'
-                        else:
-                             ent = get_empresa(r['pais'], r['items']); sub = sum(x['Total'] for x in r['items']); tn, tv = get_impuestos(r['pais'], sub, sub); calc = {'subtotal':sub, 'fee':0, 'tax_name':tn, 'tax_val':tv, 'total':r['total']}
-                             pdf = generar_pdf_final(ent, cli, r['items'], calc, idi_saved, ext)
-                             b64 = base64.b64encode(pdf).decode('latin-1')
-                             pdf_links = f'<a href="data:application/pdf;base64,{b64}" download="Cot_{r["id"]}.pdf">📄 Ver PDF Cotización ({idi_saved})</a>'
-                        st.markdown(pdf_links, unsafe_allow_html=True)
-                    else: st.warning("⚠️ PDF no disponible.")
-                    
-                    # --- NUEVA FUNCIONALIDAD: SUBIR FACTURA ---
-                    col_file, col_dummy = st.columns([1, 1])
-                    uploaded_invoice = col_file.file_uploader("📂 Subir PDF Factura Emitida", type=['pdf'], key=f"up_inv_{r['id']}")
+            # Obtener lista de células/equipos disponibles en el backlog
+            available_teams = to_bill_raw['equipo_asignado'].fillna("N/A").unique().tolist()
+            available_teams.sort()
+            # Agregar opción 'Todos' al principio
+            options_teams = ["Todos"] + available_teams
+            
+            with col_filter:
+                sel_team_billing = st.selectbox("📂 Filtrar por Célula", options_teams)
+            
+            # Aplicar filtro según selección
+            if sel_team_billing != "Todos":
+                # Si selecciona "N/A", filtramos los nulos o vacíos
+                if sel_team_billing == "N/A":
+                    to_bill = to_bill_raw[to_bill_raw['equipo_asignado'].isna() | (to_bill_raw['equipo_asignado'] == "N/A") | (to_bill_raw['equipo_asignado'] == "")]
+                else:
+                    to_bill = to_bill_raw[to_bill_raw['equipo_asignado'] == sel_team_billing]
+            else:
+                to_bill = to_bill_raw
 
-                    # Campos de input existentes
-                    c1, c2, c3, c4 = st.columns(4)
-                    new_oc = c1.text_input("OC", value=r.get('oc',''), key=f"oc_{r['id']}")
-                    new_hes_num = c2.text_input("N° HES", value=r.get('hes_num',''), key=f"hnum_{r['id']}")
-                    new_inv = c3.text_input("N° Factura", key=f"inv_{r['id']}")
-                    
-                    if c4.button("Emitir Factura", key=f"bill_{r['id']}", type="primary"):
-                        if not new_inv: 
-                            st.error("Falta N° Factura")
-                            continue
+            if to_bill.empty:
+                st.info(f"No hay facturación pendiente para la célula: {sel_team_billing}")
+            else:
+                for i, r in to_bill.iterrows():
+                    with st.container(border=True): # Usamos un borde para separar cada ítem
+                        lang_tag = f"[{r.get('idioma','ES')}]"
+                        team_label = f" | 👥 {r.get('equipo_asignado','N/A')}"
+                        st.markdown(f"**{lang_tag} {r['empresa']}** {team_label} | ID: {r['id']} | Total: {r['moneda']} {r['total']:,.0f}")
                         
-                        # Guardar datos básicos
-                        st.session_state['cotizaciones'].at[i, 'oc'] = new_oc
-                        st.session_state['cotizaciones'].at[i, 'hes_num'] = new_hes_num
-                        st.session_state['cotizaciones'].at[i, 'factura'] = new_inv
-                        st.session_state['cotizaciones'].at[i, 'estado'] = 'Facturada'
+                        if r.get('hes'): st.error("🚨 REQUISITO: Esta venta requiere N° HES o MIGO.")
                         
-                        # Guardar archivo PDF de factura si se subió
-                        if uploaded_invoice:
-                            try:
-                                inv_b64 = base64.b64encode(uploaded_invoice.read()).decode()
-                                st.session_state['cotizaciones'].at[i, 'factura_file'] = inv_b64
-                            except Exception as e:
-                                st.error(f"Error al procesar el archivo: {e}")
+                        # Generación de Links PDF (Código original mantenido)
+                        if r.get('items') and isinstance(r['items'], list):
+                            cli = {'empresa':r['empresa'], 'contacto':'', 'email':''} 
+                            ext = r.get('pdf_data', {'id':r['id'], 'pais':r['pais'], 'bank':0, 'desc':0})
+                            prod_items = [x for x in r['items'] if x['Ítem']=='Evaluación']
+                            serv_items = [x for x in r['items'] if x['Ítem']=='Servicio']
+                            idi_saved = r.get('idioma', 'ES')
+                            pdf_links = ""
+                            if r['pais'] == "Chile" and prod_items and serv_items:
+                                sub_p = sum(x['Total'] for x in prod_items); tax_p = sub_p*0.19; tot_p = sub_p*1.19
+                                calc_p = {'subtotal':sub_p, 'fee':0, 'tax_name':"IVA", 'tax_val':tax_p, 'total':tot_p}
+                                pdf_p = generar_pdf_final(EMPRESAS['Chile_Pruebas'], cli, prod_items, calc_p, idi_saved, ext)
+                                b64_p = base64.b64encode(pdf_p).decode('latin-1')
+                                sub_s = sum(x['Total'] for x in serv_items); tot_s = sub_s
+                                calc_s = {'subtotal':sub_s, 'fee':0, 'tax_name':"", 'tax_val':0, 'total':tot_s}
+                                pdf_s = generar_pdf_final(EMPRESAS['Chile_Servicios'], cli, serv_items, calc_s, idi_saved, ext)
+                                b64_s = base64.b64encode(pdf_s).decode('latin-1')
+                                pdf_links = f'<a href="data:application/pdf;base64,{b64_p}" download="Cot_{r["id"]}_P.pdf">📄 Ver PDF SpA ({idi_saved})</a> | <a href="data:application/pdf;base64,{b64_s}" download="Cot_{r["id"]}_S.pdf">📄 Ver PDF Ltda ({idi_saved})</a>'
+                            else:
+                                ent = get_empresa(r['pais'], r['items']); sub = sum(x['Total'] for x in r['items']); tn, tv = get_impuestos(r['pais'], sub, sub); calc = {'subtotal':sub, 'fee':0, 'tax_name':tn, 'tax_val':tv, 'total':r['total']}
+                                pdf = generar_pdf_final(ent, cli, r['items'], calc, idi_saved, ext)
+                                b64 = base64.b64encode(pdf).decode('latin-1')
+                                pdf_links = f'<a href="data:application/pdf;base64,{b64}" download="Cot_{r["id"]}.pdf">📄 Ver PDF Cotización ({idi_saved})</a>'
+                            st.markdown(pdf_links, unsafe_allow_html=True)
+                        else: st.warning("⚠️ PDF no disponible.")
+                        
+                        # --- NUEVA FUNCIONALIDAD: SUBIR FACTURA ---
+                        col_file, col_dummy = st.columns([1, 1])
+                        uploaded_invoice = col_file.file_uploader("📂 Subir PDF Factura Emitida", type=['pdf'], key=f"up_inv_{r['id']}")
 
-                        # Sync Github
-                        if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
-                            lluvia_dolares() # <--- EFECTO DE LLUVIA DE DÓLARES
-                            st.success(f"Factura {new_inv} emitida correctamente!"); 
-                            time.sleep(3); st.rerun()
+                        # Campos de input existentes
+                        c1, c2, c3, c4 = st.columns(4)
+                        new_oc = c1.text_input("OC", value=r.get('oc',''), key=f"oc_{r['id']}")
+                        new_hes_num = c2.text_input("N° HES", value=r.get('hes_num',''), key=f"hnum_{r['id']}")
+                        new_inv = c3.text_input("N° Factura", key=f"inv_{r['id']}")
+                        
+                        if c4.button("Emitir Factura", key=f"bill_{r['id']}", type="primary"):
+                            if not new_inv: 
+                                st.error("Falta N° Factura")
+                                continue
+                            
+                            # Guardar datos básicos
+                            st.session_state['cotizaciones'].at[i, 'oc'] = new_oc
+                            st.session_state['cotizaciones'].at[i, 'hes_num'] = new_hes_num
+                            st.session_state['cotizaciones'].at[i, 'factura'] = new_inv
+                            st.session_state['cotizaciones'].at[i, 'estado'] = 'Facturada'
+                            
+                            # Guardar archivo PDF de factura si se subió
+                            if uploaded_invoice:
+                                try:
+                                    inv_b64 = base64.b64encode(uploaded_invoice.read()).decode()
+                                    st.session_state['cotizaciones'].at[i, 'factura_file'] = inv_b64
+                                except Exception as e:
+                                    st.error(f"Error al procesar el archivo: {e}")
+
+                            # Sync Github
+                            if github_push_json('url_cotizaciones', st.session_state['cotizaciones'].to_dict(orient='records'), st.session_state.get('cotizaciones_sha')):
+                                lluvia_dolares() # <--- EFECTO DE LLUVIA DE DÓLARES
+                                st.success(f"Factura {new_inv} emitida correctamente!"); 
+                                time.sleep(3); st.rerun()
     
     # --- PESTAÑA 2: HISTORIAL ---
     with tab_collection:
